@@ -1,0 +1,1269 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GateIo-TradFi</title>
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0d1117; color: #e6edf3;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+  }
+  /* 主区域 = 内容区 + 侧边栏 */
+  #main-body { flex: 1; display: flex; overflow: hidden; min-height: 0; }
+  #content-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
+  header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 14px; background: #161b22;
+    border-bottom: 1px solid #30363d; flex-shrink: 0; flex-wrap: wrap;
+  }
+  #symbol-title { font-size: 16px; font-weight: 700; letter-spacing: .5px; white-space: nowrap; }
+
+  .btn-group { display: flex; gap: 4px; flex-wrap: wrap; }
+  .btn-group button {
+    padding: 3px 9px; border: 1px solid #30363d; border-radius: 5px;
+    background: #21262d; color: #8b949e; font-size: 12px;
+    cursor: pointer; transition: all .15s; white-space: nowrap;
+  }
+  .btn-group button:hover  { border-color: #58a6ff; color: #58a6ff; }
+  .btn-group button.active { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  .btn-group button.ind-on { background: #26a641; border-color: #26a641; color: #fff; }
+  .btn-group button.danger { background: #da3633; border-color: #da3633; color: #fff; }
+
+  /* MA 徽章 */
+  #ma-badges { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+  .ma-badge {
+    display: flex; align-items: center; gap: 3px;
+    padding: 2px 6px; border-radius: 4px; font-size: 11px;
+    background: #21262d; border: 1px solid #30363d; cursor: default;
+  }
+  .ma-badge .ma-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .ma-badge .ma-rm  { cursor: pointer; color: #8b949e; font-size: 13px; line-height: 1; margin-left: 2px; }
+  .ma-badge .ma-rm:hover { color: #f85149; }
+
+  .sep { width: 1px; height: 20px; background: #30363d; flex-shrink: 0; }
+
+  /* ── 账户信息侧边栏 ── */
+  #account-sidebar {
+    width: 220px; flex-shrink: 0;
+    background: #161b22; border-left: 1px solid #30363d;
+    display: flex; flex-direction: column;
+    transition: width .2s ease; overflow: hidden;
+  }
+  #account-sidebar.collapsed { width: 28px; }
+  #sidebar-toggle {
+    flex-shrink: 0; height: 36px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; color: #8b949e; font-size: 13px;
+    border-bottom: 1px solid #30363d; user-select: none;
+  }
+  #sidebar-toggle:hover { background: #1c2128; color: #e6edf3; }
+  #account-sidebar.collapsed #sidebar-toggle { justify-content: center; }
+  #sidebar-inner {
+    flex: 1; overflow-y: auto; overflow-x: hidden;
+    padding: 10px 0 10px;
+  }
+  #account-sidebar.collapsed #sidebar-inner { display: none; }
+  .sidebar-section-title {
+    font-size: 10px; font-weight: 700; color: #8b949e;
+    letter-spacing: .8px; text-transform: uppercase;
+    padding: 6px 14px 4px;
+  }
+  .sidebar-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 5px 14px; font-size: 12px;
+  }
+  .sidebar-row .sr-label { color: #8b949e; white-space: nowrap; }
+  .sidebar-row .sr-val   { color: #e6edf3; font-weight: 600; white-space: nowrap; }
+  .sidebar-divider { border: none; border-top: 1px solid #30363d; margin: 8px 0; }
+  #kline-status { font-size: 12px; color: #8b949e; white-space: nowrap; }
+
+  #btn-logout {
+    padding: 3px 9px; border: 1px solid #30363d; border-radius: 5px;
+    background: #21262d; color: #8b949e; font-size: 12px;
+    cursor: pointer; transition: all .15s; white-space: nowrap; margin-left: auto;
+  }
+  #btn-logout:hover { border-color: #f85149; color: #f85149; }
+  #charts-wrap { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
+  #main-chart-wrap { flex: 1; min-height: 0; }
+  #macd-panel { height: 160px; flex-shrink: 0; border-top: 1px solid #30363d; }
+
+  #macd-panel.hidden { display: none; }
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.6);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 999;
+  }
+  /* 表单控件 */
+  .modal-overlay.hidden { display: none; }
+    background: #161b22; border: 1px solid #30363d; border-radius: 10px;
+  .modal-box {
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .modal-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 16px; border-bottom: 1px solid #30363d;
+    font-size: 14px; font-weight: 600;
+  }
+  .modal-close { cursor: pointer; color: #8b949e; font-size: 20px; line-height: 1; }
+  .modal-close:hover { color: #e6edf3; }
+  .modal-tabs { display: flex; border-bottom: 1px solid #30363d; }
+  .modal-tab {
+    padding: 8px 16px; font-size: 13px; cursor: pointer;
+    color: #8b949e; border-bottom: 2px solid transparent; transition: all .15s;
+  }
+  .modal-tab.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+  .modal-body { padding: 14px 16px; overflow-y: auto; flex: 1; }
+  .tab-pane { display: none; }
+  .tab-pane.active { display: block; }
+
+  /* ── 设置模态框 ── */
+  .form-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .form-row label { font-size: 12px; color: #8b949e; width: 80px; flex-shrink: 0; }
+  .form-row input[type=number], .form-row input[type=text] {
+    background: #0d1117; border: 1px solid #30363d; border-radius: 5px;
+    color: #e6edf3; padding: 4px 8px; font-size: 12px; width: 80px;
+  }
+  .form-row input[type=color] {
+    width: 36px; height: 26px; border: 1px solid #30363d; border-radius: 4px;
+    background: #0d1117; cursor: pointer; padding: 1px;
+  }
+  .form-row input:focus { outline: 1px solid #58a6ff; }
+
+  .ma-list-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 8px; margin-bottom: 6px;
+    background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+  }
+  .ma-list-item label { font-size: 12px; color: #8b949e; }
+  .ma-list-item input[type=number] {
+    background: #161b22; border: 1px solid #30363d; border-radius: 4px;
+    color: #e6edf3; padding: 3px 6px; font-size: 12px; width: 60px;
+  }
+  .ma-list-item input[type=color] {
+    width: 30px; height: 24px; border: 1px solid #30363d; border-radius: 4px;
+    background: #161b22; cursor: pointer; padding: 1px;
+  }
+  .ma-list-item .rm-btn {
+    margin-left: auto; cursor: pointer; color: #8b949e; font-size: 16px;
+  }
+  .ma-list-item .rm-btn:hover { color: #f85149; }
+  .divider { border: none; border-top: 1px solid #30363d; margin: 10px 0; }
+  .btn-apply {
+    padding: 5px 14px; background: #1f6feb; border: none; border-radius: 5px;
+    color: #fff; font-size: 12px; cursor: pointer; transition: background .15s;
+  }
+  .btn-apply:hover { background: #388bfd; }
+  .btn-add-ma {
+    padding: 4px 10px; background: #21262d; border: 1px solid #30363d;
+    border-radius: 5px; color: #8b949e; font-size: 12px; cursor: pointer;
+  }
+  .btn-add-ma:hover { border-color: #58a6ff; color: #58a6ff; }
+
+  /* ── 头寸面板 ── */
+  #positions-panel {
+    flex-shrink: 0; background: #161b22;
+    border-top: 1px solid #30363d;
+    display: flex; flex-direction: column;
+    transition: height .2s ease; overflow: hidden;
+  }
+  #positions-panel.expanded  { height: 200px; }
+  #positions-panel.collapsed { height: 30px; }
+  #pos-header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 5px 14px; flex-shrink: 0;
+    cursor: pointer; user-select: none;
+  }
+  #pos-header:hover { background: #1c2128; }
+  #pos-title { font-size: 12px; font-weight: 600; color: #e6edf3; }
+  #pos-count { font-size: 11px; color: #8b949e; }
+  #pos-toggle { margin-left: auto; font-size: 11px; color: #8b949e; }
+  #pos-body { flex: 1; overflow-y: auto; padding: 0 6px 6px; min-height: 0; }
+  #pos-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  #pos-table th {
+    position: sticky; top: 0; background: #161b22;
+    padding: 3px 10px; text-align: right; color: #8b949e;
+    border-bottom: 1px solid #30363d; white-space: nowrap;
+  }
+  #pos-table th:first-child, #pos-table td:first-child { text-align: left; }
+  #pos-table td {
+    padding: 3px 10px; text-align: right; color: #e6edf3;
+    border-bottom: 1px solid #1c2128; white-space: nowrap;
+  }
+  #pos-table .dir-long  { color: #26a641; font-weight: 600; }
+  #pos-table .dir-short { color: #f85149; font-weight: 600; }
+  #pos-table .pnl-pos   { color: #26a641; }
+  #pos-table .pnl-neg   { color: #f85149; }
+  #pos-empty { color: #8b949e; font-size: 12px; padding: 10px 14px; }
+  .pos-edit-btn {
+    padding: 2px 8px; border: 1px solid #30363d; border-radius: 4px;
+    background: #21262d; color: #8b949e; font-size: 11px;
+    cursor: pointer; transition: all .15s;
+  }
+  .pos-edit-btn:hover { border-color: #58a6ff; color: #58a6ff; }
+  .pos-close-btn {
+    padding: 2px 8px; border: 1px solid #f85149; border-radius: 4px;
+    background: #21262d; color: #f85149; font-size: 11px;
+    cursor: pointer; transition: all .15s;
+  }
+  .pos-close-btn:hover { background: #f85149; color: #fff; }
+  .pos-close-btn:disabled { opacity: .45; cursor: not-allowed; }
+  #btn-close-all {
+    padding: 2px 10px; border: 1px solid #f85149; border-radius: 4px;
+    background: transparent; color: #f85149; font-size: 11px;
+    cursor: pointer; transition: all .15s; margin-left: 6px;
+  }
+  #btn-close-all:hover { background: #f85149; color: #fff; }
+
+  /* ── 关闭确认弹窗 ── */
+  #close-confirm-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.55);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 1001;
+  }
+  #close-confirm-overlay.hidden { display: none; }
+  #close-confirm-box {
+    background: #161b22; border: 1px solid #f85149; border-radius: 10px;
+    width: 300px; max-width: 96vw; padding: 22px 20px 18px;
+  }
+  #close-confirm-box h3 { font-size: 14px; font-weight: 600; color: #f85149; margin-bottom: 10px; }
+  #close-confirm-msg { font-size: 12px; color: #8b949e; margin-bottom: 18px; line-height: 1.6; }
+  .close-confirm-actions { display: flex; gap: 8px; justify-content: flex-end; }
+  .close-confirm-actions button {
+    padding: 5px 16px; border-radius: 5px; font-size: 12px; cursor: pointer;
+  }
+  #cc-cancel { background: #21262d; border: 1px solid #30363d; color: #8b949e; }
+  #cc-cancel:hover { border-color: #58a6ff; color: #58a6ff; }
+  #cc-confirm { background: #da3633; border: none; color: #fff; }
+  #cc-confirm:hover { background: #f85149; }
+  #cc-confirm:disabled { background: #30363d; color: #666; cursor: not-allowed; }
+
+  /* ── TP/SL 弹窗 ── */
+  #tpsl-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.55);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 1000;
+  }
+  #tpsl-overlay.hidden { display: none; }
+  #tpsl-box {
+    background: #161b22; border: 1px solid #30363d; border-radius: 10px;
+    width: 320px; max-width: 96vw; padding: 20px;
+  }
+  #tpsl-box h3 { font-size: 14px; font-weight: 600; margin-bottom: 14px; color: #e6edf3; }
+  .tpsl-row {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
+  }
+  .tpsl-row label {
+    font-size: 12px; color: #8b949e; width: 70px; flex-shrink: 0;
+  }
+  .tpsl-row input {
+    flex: 1; background: #0d1117; border: 1px solid #30363d; border-radius: 5px;
+    color: #e6edf3; padding: 5px 10px; font-size: 13px;
+  }
+  .tpsl-row input:focus { outline: 1px solid #58a6ff; }
+  .tpsl-hint {
+    font-size: 11px; color: #8b949e; margin-bottom: 14px; line-height: 1.5;
+  }
+  .tpsl-actions { display: flex; gap: 8px; justify-content: flex-end; }
+  .tpsl-actions button {
+    padding: 5px 16px; border-radius: 5px; font-size: 12px; cursor: pointer;
+    transition: background .15s;
+  }
+  #tpsl-cancel { background: #21262d; border: 1px solid #30363d; color: #8b949e; }
+  #tpsl-cancel:hover { border-color: #58a6ff; color: #58a6ff; }
+  #tpsl-save   { background: #1f6feb; border: none; color: #fff; }
+  #tpsl-save:hover { background: #388bfd; }
+  #tpsl-save:disabled { background: #30363d; color: #666; cursor: not-allowed; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="btn-group" id="symbol-btns"></div>
+  <div class="sep"></div>
+  <div id="symbol-title">XAUUSD</div>
+  <div class="btn-group" id="interval-btns"></div>
+  <div class="sep"></div>
+
+  <!-- 指标工具栏 -->
+  <div id="ma-badges"></div>
+  <div class="btn-group">
+    <button onclick="openModal('ma')">+ MA</button>
+    <button id="btn-bb"   onclick="toggleBB()">BB</button>
+    <button id="btn-macd" onclick="toggleMACD()">MACD</button>
+    <button onclick="openModal('ma')" style="display:none" id="btn-settings">⚙</button>
+  </div>
+
+  <span id="kline-status">加载中…</span>
+  <button id="btn-logout" onclick="doLogout()" title="退出登录">退出</button>
+</header>
+
+<div id="main-body">
+<div id="content-area">
+
+<div id="charts-wrap">
+  <div id="main-chart-wrap"></div>
+  <div id="macd-panel" class="hidden"></div>
+</div>
+
+<!-- ── 头寸面板 ── -->
+<div id="positions-panel" class="expanded">
+  <div id="pos-header" onclick="togglePositionsPanel()">
+    <span id="pos-title">持仓</span>
+    <span id="pos-count"></span>
+    <button id="btn-close-all" onclick="openCloseAllConfirm(event)" title="平掉所有头寸">一键平仓</button>
+    <span id="pos-toggle">▾</span>
+  </div>
+  <div id="pos-body">
+    <table id="pos-table">
+      <thead>
+        <tr>
+          <th>品种</th>
+          <th>方向</th>
+          <th>手数</th>
+          <th>开仓价</th>
+          <th>当前价</th>
+          <th>浮盈亏</th>
+          <th>保证金</th>
+          <th>止盈</th>
+          <th>止损</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody id="pos-tbody"></tbody>
+    </table>
+    <div id="pos-empty" style="display:none">暂无持仓</div>
+  </div>
+</div>
+
+</div><!-- /#content-area -->
+
+<!-- ── 账户信息侧边栏 ── -->
+<div id="account-sidebar">
+  <div id="sidebar-toggle" onclick="toggleSidebar()" title="收起/展开">◂ 账户</div>
+  <div id="sidebar-inner">
+
+    <div class="sidebar-section-title">账户</div>
+    <div class="sidebar-row">
+      <span class="sr-label">MT5 ID</span>
+      <span class="sr-val" id="mt5-id">--</span>
+    </div>
+    <div class="sidebar-row">
+      <span class="sr-label">余额</span>
+      <span class="sr-val" id="balance-val">--</span>
+    </div>
+    <div class="sidebar-row">
+      <span class="sr-label">保证金水平</span>
+      <span class="sr-val" id="margin-level-val">--</span>
+    </div>
+    <div class="sidebar-row">
+      <span class="sr-label">可用保证金</span>
+      <span class="sr-val" id="margin-free-val">--</span>
+    </div>
+    <div class="sidebar-row">
+      <span class="sr-label">强平比例</span>
+      <span class="sr-val" id="stop-out-val">--</span>
+    </div>
+
+    <hr class="sidebar-divider">
+
+    <div class="sidebar-section-title">盈亏</div>
+    <div class="sidebar-row">
+      <span class="sr-label">浮动盈亏</span>
+      <span class="sr-val" id="upnl-val">--</span>
+    </div>
+    <div class="sidebar-row">
+      <span class="sr-label">持仓总盈亏</span>
+      <span class="sr-val" id="total-pnl-val">--</span>
+    </div>
+    <div class="sidebar-row">
+      <span class="sr-label">今日已实现</span>
+      <span class="sr-val" id="today-pnl-val">--</span>
+    </div>
+    <div class="sidebar-row">
+      <span class="sr-label">昨日已实现</span>
+      <span class="sr-val" id="yesterday-pnl-val">--</span>
+    </div>
+
+  </div>
+</div><!-- /#account-sidebar -->
+
+</div><!-- /#main-body -->
+
+<!-- ── 关闭确认弹窗 ── -->
+<div id="close-confirm-overlay" class="hidden">
+  <div id="close-confirm-box">
+    <h3 id="cc-title">确认平仓</h3>
+    <div id="close-confirm-msg"></div>
+    <div class="close-confirm-actions">
+      <button id="cc-cancel"  onclick="closeConfirmModal()">取消</button>
+      <button id="cc-confirm" onclick="_doConfirmedClose()">确认平仓</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── TP/SL 编辑弹窗 ── -->
+<div id="tpsl-overlay" class="hidden" onclick="_tpslBgClick(event)">
+  <div id="tpsl-box">
+    <h3 id="tpsl-title">设置止盈 / 止损</h3>
+    <div class="tpsl-hint">传 0 或留空将清空原有价格</div>
+    <div class="tpsl-row">
+      <label>止盈价</label>
+      <input id="tpsl-tp" type="number" min="0" step="any" placeholder="0 = 清空">
+    </div>
+    <div class="tpsl-row">
+      <label>止损价</label>
+      <input id="tpsl-sl" type="number" min="0" step="any" placeholder="0 = 清空">
+    </div>
+    <div class="tpsl-actions">
+      <button id="tpsl-cancel" onclick="closeTPSLModal()">取消</button>
+      <button id="tpsl-save"   onclick="saveTPSL()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── 设置模态框 ── -->
+<div class="modal-overlay hidden" id="modal-overlay" onclick="closeModalOnBg(event)">
+  <div class="modal-box">
+    <div class="modal-header">
+      <span>指标设置</span>
+      <span class="modal-close" onclick="closeModal()">×</span>
+    </div>
+    <div class="modal-tabs">
+      <div class="modal-tab active" data-tab="ma" onclick="switchTab('ma')">均线 MA</div>
+      <div class="modal-tab" data-tab="bb" onclick="switchTab('bb')">布林带 BB</div>
+      <div class="modal-tab" data-tab="macd" onclick="switchTab('macd')">MACD</div>
+    </div>
+    <div class="modal-body">
+
+      <!-- MA 面板 -->
+      <div class="tab-pane active" id="tab-ma">
+        <div id="ma-list"></div>
+        <button class="btn-add-ma" onclick="addMAConfig()">+ 添加均线</button>
+      </div>
+
+      <!-- BB 面板 -->
+      <div class="tab-pane" id="tab-bb">
+        <div class="form-row"><label>周期</label><input type="number" id="bb-period" value="20" min="2" max="500"></div>
+        <div class="form-row"><label>倍数 (σ)</label><input type="number" id="bb-mult" value="2" min="0.1" max="10" step="0.1"></div>
+        <div class="form-row"><label>上轨颜色</label><input type="color" id="bb-color-upper" value="#58a6ff"></div>
+        <div class="form-row"><label>中轨颜色</label><input type="color" id="bb-color-mid" value="#58a6ff"></div>
+        <div class="form-row"><label>下轨颜色</label><input type="color" id="bb-color-lower" value="#58a6ff"></div>
+        <button class="btn-apply" onclick="applyBBConfig()">应用</button>
+      </div>
+
+      <!-- MACD 面板 -->
+      <div class="tab-pane" id="tab-macd">
+        <div class="form-row"><label>快线周期</label><input type="number" id="macd-fast" value="12" min="1" max="200"></div>
+        <div class="form-row"><label>慢线周期</label><input type="number" id="macd-slow" value="26" min="1" max="200"></div>
+        <div class="form-row"><label>信号周期</label><input type="number" id="macd-sig"  value="9"  min="1" max="200"></div>
+        <hr class="divider">
+        <div class="form-row"><label>MACD线颜色</label><input type="color" id="macd-color-macd"   value="#58a6ff"></div>
+        <div class="form-row"><label>信号线颜色</label><input type="color" id="macd-color-signal" value="#f0883e"></div>
+        <div class="form-row"><label>柱(涨)颜色</label><input type="color" id="macd-color-up"     value="#26a641"></div>
+        <div class="form-row"><label>柱(跌)颜色</label><input type="color" id="macd-color-down"   value="#f85149"></div>
+        <button class="btn-apply" onclick="applyMACDConfig()">应用</button>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+// ════════════════════════════════════════════
+//  常量 & 状态
+// ════════════════════════════════════════════
+const SYMBOLS   = ['XAUUSD', 'NAS100'];
+const INTERVALS = ['1m','5m','15m','30m','1h','4h','1d'];
+// 每个周期对应的自动刷新间隔（毫秒）
+const REFRESH_MS = { '1m':100,'5m':100,'15m':100,'30m':100,'1h':100,'4h':100,'1d':100 };
+let _refreshTimer = null;
+let _posTimer     = null;
+let currentSymbol   = 'XAUUSD';
+let currentInterval = '1m';
+let currentCandles  = [];
+
+// ── MA 配置（多条）─────────────────────────
+// { id, period, color, series }
+let maList = [];
+let maNextId = 1;
+
+// ── BB 配置 ─────────────────────────────────
+let bbCfg = { period: 20, mult: 2, colorUpper: '#58a6ff', colorMid: '#58a6ff', colorLower: '#58a6ff', enabled: false };
+let bbSeries = { upper: null, mid: null, lower: null };
+
+// ── MACD 配置 ────────────────────────────────
+let macdCfg = {
+  fast: 12, slow: 26, sig: 9,
+  colorMacd: '#58a6ff', colorSignal: '#f0883e', colorUp: '#26a641', colorDown: '#f85149',
+  enabled: false,
+};
+let macdChart = null, macdLineSeries = null, signalLineSeries = null, histSeries = null;
+
+// ════════════════════════════════════════════
+//  主图表
+// ════════════════════════════════════════════
+const mainChart = LightweightCharts.createChart(
+  document.getElementById('main-chart-wrap'), {
+  layout:     { background: { color: '#0d1117' }, textColor: '#8b949e' },
+  grid:       { vertLines: { color: '#21262d' }, horzLines: { color: '#21262d' } },
+  crosshair:  { mode: LightweightCharts.CrosshairMode.Normal },
+  rightPriceScale: { borderColor: '#30363d' },
+  timeScale:  { borderColor: '#30363d', timeVisible: true, secondsVisible: false },
+  width:  document.getElementById('main-chart-wrap').clientWidth,
+  height: document.getElementById('main-chart-wrap').clientHeight,
+});
+
+const candleSeries = mainChart.addCandlestickSeries({
+  upColor: '#26a641', downColor: '#f85149',
+  borderUpColor: '#26a641', borderDownColor: '#f85149',
+  wickUpColor:   '#26a641', wickDownColor:   '#f85149',
+});
+
+// ════════════════════════════════════════════
+//  MACD 子图
+// ════════════════════════════════════════════
+function createMacdChart() {
+  const el = document.getElementById('macd-panel');
+  macdChart = LightweightCharts.createChart(el, {
+    layout: { background: { color: '#0d1117' }, textColor: '#8b949e' },
+    grid:   { vertLines: { color: '#21262d' }, horzLines: { color: '#21262d' } },
+    rightPriceScale: { borderColor: '#30363d', scaleMargins: { top: 0.1, bottom: 0.1 } },
+    timeScale: { borderColor: '#30363d', timeVisible: true, secondsVisible: false },
+    width: el.clientWidth, height: el.clientHeight,
+  });
+  macdLineSeries  = macdChart.addLineSeries({ color: macdCfg.colorMacd,   lineWidth: 1 });
+  signalLineSeries= macdChart.addLineSeries({ color: macdCfg.colorSignal, lineWidth: 1 });
+  histSeries      = macdChart.addHistogramSeries({
+    color: macdCfg.colorUp,
+    priceFormat: { type: 'price', precision: 5, minMove: 0.00001 },
+  });
+  mainChart.timeScale().subscribeVisibleTimeRangeChange(r => {
+    if (r && macdChart) macdChart.timeScale().setVisibleRange(r);
+  });
+  macdChart.timeScale().subscribeVisibleTimeRangeChange(r => {
+    if (r) mainChart.timeScale().setVisibleRange(r);
+  });
+}
+
+function destroyMacdChart() {
+  if (macdChart) { macdChart.remove(); macdChart = null; }
+  macdLineSeries = signalLineSeries = histSeries = null;
+}
+
+// ════════════════════════════════════════════
+//  Resize
+// ════════════════════════════════════════════
+new ResizeObserver(() => {
+  const mw = document.getElementById('main-chart-wrap');
+  mainChart.applyOptions({ width: mw.clientWidth, height: mw.clientHeight });
+  if (macdChart) {
+    const mp = document.getElementById('macd-panel');
+    macdChart.applyOptions({ width: mp.clientWidth, height: mp.clientHeight });
+  }
+}).observe(document.getElementById('charts-wrap'));
+
+// ════════════════════════════════════════════
+//  指标计算
+// ════════════════════════════════════════════
+function sma(arr, p) {
+  return arr.map((_, i) =>
+    i < p - 1 ? null : arr.slice(i - p + 1, i + 1).reduce((a, b) => a + b, 0) / p);
+}
+function ema(arr, p) {
+  const k = 2 / (p + 1), r = new Array(arr.length).fill(null);
+  r[p - 1] = arr.slice(0, p).reduce((a, b) => a + b, 0) / p;
+  for (let i = p; i < arr.length; i++) r[i] = arr[i] * k + r[i - 1] * (1 - k);
+  return r;
+}
+function stdDev(arr, p) {
+  return arr.map((_, i) => {
+    if (i < p - 1) return null;
+    const s = arr.slice(i - p + 1, i + 1), m = s.reduce((a, b) => a + b, 0) / p;
+    return Math.sqrt(s.reduce((a, b) => a + (b - m) ** 2, 0) / p);
+  });
+}
+function calcBB(closes, p, mult) {
+  const mid = sma(closes, p), sd = stdDev(closes, p);
+  return {
+    upper: mid.map((m, i) => m != null ? m + mult * sd[i] : null),
+    mid,
+    lower: mid.map((m, i) => m != null ? m - mult * sd[i] : null),
+  };
+}
+function calcMACD(closes, fast, slow, sig) {
+  const ef = ema(closes, fast), es = ema(closes, slow);
+  const mv = ef.map((v, i) => v != null && es[i] != null ? v - es[i] : null);
+  const sa = new Array(closes.length).fill(null);
+  const st = slow - 1 + sig - 1;
+  if (st < closes.length) {
+    sa[st] = mv.slice(slow - 1, slow - 1 + sig).reduce((a, b) => a + b, 0) / sig;
+    const k = 2 / (sig + 1);
+    for (let i = st + 1; i < closes.length; i++)
+      sa[i] = mv[i] * k + sa[i - 1] * (1 - k);
+  }
+  return { macd: mv, signal: sa, hist: mv.map((v, i) => v != null && sa[i] != null ? v - sa[i] : null) };
+}
+function toSeries(times, vals) {
+  return times.map((t, i) => vals[i] != null ? { time: t, value: vals[i] } : null).filter(Boolean);
+}
+
+// 能量减弱时返回 50% 透明度颜色
+function histColor(hist, i) {
+  const isUp  = hist[i] >= 0;
+  const fade  = i > 0 && hist[i - 1] != null && Math.abs(hist[i]) < Math.abs(hist[i - 1]);
+  const base  = isUp ? macdCfg.colorUp : macdCfg.colorDown;
+  return fade ? base + '80' : base;
+}
+
+// ════════════════════════════════════════════
+//  渲染所有指标
+// ════════════════════════════════════════════
+function renderAllIndicators() {
+  if (!currentCandles.length) return;
+  const closes = currentCandles.map(c => c.close);
+  const times  = currentCandles.map(c => c.time);
+
+  // MA（多条）
+  maList.forEach(cfg => {
+    if (!cfg.series)
+      cfg.series = mainChart.addLineSeries({ color: cfg.color, lineWidth: 1, priceLineVisible: false });
+    cfg.series.applyOptions({ color: cfg.color });
+    cfg.series.setData(toSeries(times, sma(closes, cfg.period)));
+  });
+
+  // BB
+  if (bbCfg.enabled) {
+    const bb = calcBB(closes, bbCfg.period, bbCfg.mult);
+    if (!bbSeries.upper) {
+      bbSeries.upper = mainChart.addLineSeries({ color: bbCfg.colorUpper, lineWidth: 1, priceLineVisible: false });
+      bbSeries.mid   = mainChart.addLineSeries({ color: bbCfg.colorMid,   lineWidth: 1, priceLineVisible: false, lineStyle: 1 });
+      bbSeries.lower = mainChart.addLineSeries({ color: bbCfg.colorLower, lineWidth: 1, priceLineVisible: false });
+    } else {
+      bbSeries.upper.applyOptions({ color: bbCfg.colorUpper });
+      bbSeries.mid.applyOptions({ color: bbCfg.colorMid });
+      bbSeries.lower.applyOptions({ color: bbCfg.colorLower });
+    }
+    bbSeries.upper.setData(toSeries(times, bb.upper));
+    bbSeries.mid.setData(toSeries(times, bb.mid));
+    bbSeries.lower.setData(toSeries(times, bb.lower));
+  } else if (bbSeries.upper) {
+    ['upper','mid','lower'].forEach(k => { mainChart.removeSeries(bbSeries[k]); bbSeries[k] = null; });
+  }
+
+  // MACD
+  if (macdCfg.enabled) {
+    const panel = document.getElementById('macd-panel');
+    if (panel.classList.contains('hidden')) {
+      panel.classList.remove('hidden');
+      createMacdChart();
+      resize();
+    }
+    if (macdLineSeries) macdLineSeries.applyOptions({ color: macdCfg.colorMacd });
+    if (signalLineSeries) signalLineSeries.applyOptions({ color: macdCfg.colorSignal });
+    const { macd, signal, hist } = calcMACD(closes, macdCfg.fast, macdCfg.slow, macdCfg.sig);
+    macdLineSeries.setData(toSeries(times, macd));
+    signalLineSeries.setData(toSeries(times, signal));
+    histSeries.setData(times.map((t, i) => hist[i] != null
+      ? { time: t, value: hist[i], color: histColor(hist, i) }
+      : null).filter(Boolean));
+    macdChart.timeScale().fitContent();
+  } else {
+    const panel = document.getElementById('macd-panel');
+    if (!panel.classList.contains('hidden')) {
+      panel.classList.add('hidden');
+      destroyMacdChart();
+      resize();
+    }
+  }
+}
+
+function resize() {
+  const mw = document.getElementById('main-chart-wrap');
+  mainChart.applyOptions({ width: mw.clientWidth, height: mw.clientHeight });
+  if (macdChart) {
+    const mp = document.getElementById('macd-panel');
+    macdChart.applyOptions({ width: mp.clientWidth, height: mp.clientHeight });
+  }
+}
+
+// ════════════════════════════════════════════
+//  配置持久化（localStorage）
+// ════════════════════════════════════════════
+const CFG_KEY = 'tradfi_indicator_cfg';
+
+function saveConfig() {
+  const payload = {
+    bbCfg:    { ...bbCfg },
+    macdCfg:  { ...macdCfg },
+    maList:   maList.map(m => ({ id: m.id, period: m.period, color: m.color })),
+    maNextId: maNextId,
+  };
+  try { localStorage.setItem(CFG_KEY, JSON.stringify(payload)); } catch(_) {}
+}
+
+function syncModalForms() {
+  document.getElementById('bb-period').value       = bbCfg.period;
+  document.getElementById('bb-mult').value         = bbCfg.mult;
+  document.getElementById('bb-color-upper').value  = bbCfg.colorUpper;
+  document.getElementById('bb-color-mid').value    = bbCfg.colorMid;
+  document.getElementById('bb-color-lower').value  = bbCfg.colorLower;
+  document.getElementById('macd-fast').value        = macdCfg.fast;
+  document.getElementById('macd-slow').value        = macdCfg.slow;
+  document.getElementById('macd-sig').value         = macdCfg.sig;
+  document.getElementById('macd-color-macd').value  = macdCfg.colorMacd;
+  document.getElementById('macd-color-signal').value= macdCfg.colorSignal;
+  document.getElementById('macd-color-up').value    = macdCfg.colorUp;
+  document.getElementById('macd-color-down').value  = macdCfg.colorDown;
+}
+
+function loadConfig() {
+  try {
+    const raw = localStorage.getItem(CFG_KEY);
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    if (saved.bbCfg)   Object.assign(bbCfg,   saved.bbCfg);
+    if (saved.macdCfg) Object.assign(macdCfg, saved.macdCfg);
+    if (saved.maList) {
+      maList   = saved.maList.map(m => ({ ...m, series: null }));
+      maNextId = saved.maNextId ?? (maList.length ? Math.max(...maList.map(m => m.id)) + 1 : 1);
+    }
+    syncModalForms();
+    if (bbCfg.enabled)   document.getElementById('btn-bb').classList.add('ind-on');
+    if (macdCfg.enabled) document.getElementById('btn-macd').classList.add('ind-on');
+  } catch(_) {}
+}
+
+// ════════════════════════════════════════════
+//  MA 管理
+// ════════════════════════════════════════════
+function addMAConfig(period = 20, color = randomColor()) {
+  const id = maNextId++;
+  maList.push({ id, period, color, series: null });
+  renderAllIndicators();
+  renderMABadges();
+  renderMAModalList();
+  saveConfig();
+}
+
+function removeMA(id) {
+  const idx = maList.findIndex(m => m.id === id);
+  if (idx === -1) return;
+  if (maList[idx].series) mainChart.removeSeries(maList[idx].series);
+  maList.splice(idx, 1);
+  renderMABadges();
+  renderMAModalList();
+  saveConfig();
+}
+
+function updateMAFromModal(id) {
+  const m = maList.find(m => m.id === id);
+  if (!m) return;
+  const newP = parseInt(document.getElementById(`ma-p-${id}`).value) || 20;
+  const newC = document.getElementById(`ma-c-${id}`).value;
+  m.period = newP; m.color = newC;
+  if (m.series) mainChart.removeSeries(m.series);
+  m.series = null;
+  renderAllIndicators();
+  renderMABadges();
+  saveConfig();
+}
+
+function renderMABadges() {
+  const bar = document.getElementById('ma-badges');
+  bar.innerHTML = '';
+  maList.forEach(m => {
+    const el = document.createElement('div');
+    el.className = 'ma-badge';
+    el.innerHTML = `<span class="ma-dot" style="background:${m.color}"></span>
+      <span>MA${m.period}</span>
+      <span class="ma-rm" onclick="removeMA(${m.id})" title="移除">×</span>`;
+    bar.appendChild(el);
+  });
+}
+
+function renderMAModalList() {
+  const list = document.getElementById('ma-list');
+  list.innerHTML = '';
+  maList.forEach(m => {
+    const row = document.createElement('div');
+    row.className = 'ma-list-item';
+    row.innerHTML = `
+      <label>周期</label>
+      <input type="number" id="ma-p-${m.id}" value="${m.period}" min="1" max="1000" onchange="updateMAFromModal(${m.id})">
+      <label style="margin-left:4px">颜色</label>
+      <input type="color" id="ma-c-${m.id}" value="${m.color}" oninput="updateMAFromModal(${m.id})">
+      <span class="rm-btn" onclick="removeMA(${m.id});renderMAModalList()" title="删除">×</span>`;
+    list.appendChild(row);
+  });
+}
+
+function randomColor() {
+  const palette = ['#f0883e','#a371f7','#58d9b1','#e3b341','#ff7b72','#79c0ff','#56d364','#d2a8ff'];
+  return palette[maList.length % palette.length];
+}
+
+// ════════════════════════════════════════════
+//  BB 开关 & 应用
+// ════════════════════════════════════════════
+function toggleBB() {
+  bbCfg.enabled = !bbCfg.enabled;
+  document.getElementById('btn-bb').classList.toggle('ind-on', bbCfg.enabled);
+  renderAllIndicators();
+  saveConfig();
+}
+
+function applyBBConfig() {
+  bbCfg.period      = parseInt(document.getElementById('bb-period').value) || 20;
+  bbCfg.mult        = parseFloat(document.getElementById('bb-mult').value) || 2;
+  bbCfg.colorUpper  = document.getElementById('bb-color-upper').value;
+  bbCfg.colorMid    = document.getElementById('bb-color-mid').value;
+  bbCfg.colorLower  = document.getElementById('bb-color-lower').value;
+  if (bbSeries.upper) {
+    ['upper','mid','lower'].forEach(k => { mainChart.removeSeries(bbSeries[k]); bbSeries[k] = null; });
+  }
+  if (!bbCfg.enabled) { bbCfg.enabled = true; document.getElementById('btn-bb').classList.add('ind-on'); }
+  renderAllIndicators();
+  saveConfig();
+}
+
+// ════════════════════════════════════════════
+//  MACD 开关 & 应用
+// ════════════════════════════════════════════
+function toggleMACD() {
+  macdCfg.enabled = !macdCfg.enabled;
+  document.getElementById('btn-macd').classList.toggle('ind-on', macdCfg.enabled);
+  renderAllIndicators();
+  saveConfig();
+}
+
+function applyMACDConfig() {
+  macdCfg.fast        = parseInt(document.getElementById('macd-fast').value) || 12;
+  macdCfg.slow        = parseInt(document.getElementById('macd-slow').value) || 26;
+  macdCfg.sig         = parseInt(document.getElementById('macd-sig').value)  || 9;
+  macdCfg.colorMacd   = document.getElementById('macd-color-macd').value;
+  macdCfg.colorSignal = document.getElementById('macd-color-signal').value;
+  macdCfg.colorUp     = document.getElementById('macd-color-up').value;
+  macdCfg.colorDown   = document.getElementById('macd-color-down').value;
+  destroyMacdChart();
+  document.getElementById('macd-panel').classList.add('hidden');
+  if (!macdCfg.enabled) { macdCfg.enabled = true; document.getElementById('btn-macd').classList.add('ind-on'); }
+  renderAllIndicators();
+  saveConfig();
+}
+
+// ════════════════════════════════════════════
+//  模态框
+// ════════════════════════════════════════════
+function openModal(tab) {
+  renderMAModalList();
+  switchTab(tab || 'ma');
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+function closeModal() { document.getElementById('modal-overlay').classList.add('hidden'); }
+function closeModalOnBg(e) { if (e.target === document.getElementById('modal-overlay')) closeModal(); }
+function switchTab(name) {
+  document.querySelectorAll('.modal-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.toggle('active', p.id === 'tab-' + name));
+}
+
+// ════════════════════════════════════════════
+//  加载 K 线
+// ════════════════════════════════════════════
+async function loadKlines(interval) {
+  document.getElementById('kline-status').textContent = '加载中…';
+  try {
+    const res  = await fetch(`/api/klines?symbol=${currentSymbol}&interval=${interval}&limit=300`);
+    if (res.status === 401) { window.location.href = '/login'; return; }
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    currentCandles = data.candles;
+    candleSeries.setData(currentCandles);
+    renderAllIndicators();
+    mainChart.timeScale().fitContent();
+    const last = currentCandles.at(-1);
+    document.getElementById('symbol-title').textContent =
+      `${currentSymbol}  ${interval}  ${last ? last.close.toFixed(2) : ''}`;
+    document.getElementById('kline-status').textContent = `${currentCandles.length} 根K线`;
+    startAutoRefresh();
+  } catch(e) {
+    document.getElementById('kline-status').textContent = '加载失败: ' + e.message;
+  }
+}
+
+// 自动刷新定时器
+function startAutoRefresh() {
+  if (_refreshTimer) clearInterval(_refreshTimer);
+  const ms = REFRESH_MS[currentInterval] || 15000;
+  _refreshTimer = setInterval(silentRefresh, ms);
+}
+
+// 无闪烁新数据更新（保持视图不重置）
+async function silentRefresh() {
+  try {
+    const res = await fetch(`/api/klines?symbol=${currentSymbol}&interval=${currentInterval}&limit=3`);
+    if (res.status === 401) { window.location.href = '/login'; return; }
+    if (!res.ok) return;
+    const { candles } = await res.json();
+    if (!candles.length || !currentCandles.length) return;
+
+    let changed = false;
+    for (const c of candles) {
+      const lastTime = currentCandles.at(-1).time;
+      if (c.time > lastTime) {
+        currentCandles.push(c);
+        candleSeries.update(c);
+        changed = true;
+      } else if (c.time === lastTime) {
+        const last = currentCandles.at(-1);
+        if (last.open !== c.open || last.high !== c.high || last.low !== c.low || last.close !== c.close) {
+          currentCandles[currentCandles.length - 1] = c;
+          candleSeries.update(c);
+          changed = true;
+        }
+      }
+    }
+
+    if (changed) renderAllIndicators();
+    const last = currentCandles.at(-1);
+    if (last) document.getElementById('symbol-title').textContent =
+      `${currentSymbol}  ${currentInterval}  ${last.close.toFixed(2)}`;
+    document.getElementById('kline-status').textContent = `${currentCandles.length} 根K线`;
+  } catch(_) {}
+}
+
+// ════════════════════════════════════════════
+//  工具函数
+// ════════════════════════════════════════════
+function _fmtNum(v, digits = 2) {
+  return Number(v).toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits });
+}
+
+// ════════════════════════════════════════════
+//  资产信息
+// ════════════════════════════════════════════
+async function loadAssets() {
+  // 资产信息（余额）
+  try {
+    const res = await fetch('/api/assets');
+    if (res.status === 401) { window.location.href = '/login'; return; }
+    if (!res.ok) return;
+    const data = await res.json();
+    const bal = data?.data?.balance ?? data?.balance ?? data?.equity ?? null;
+    const cur = data?.data?.currency ?? data?.currency ?? '';
+    if (bal != null) {
+      const s = Number(bal).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      document.getElementById('balance-val').textContent = cur ? `${s} ${cur}` : s;
+    }
+  } catch(_) {}
+
+  // MT5 账户信息（MT5 ID + 强平比例 + 保证金）
+  try {
+    const res2 = await fetch('/api/mt5account');
+    if (res2.status === 401) { window.location.href = '/login'; return; }
+    if (!res2.ok) return;
+    const d2 = await res2.json();
+    const mt5data = d2?.data ?? d2;
+
+    const mt5id = mt5data?.login ?? mt5data?.mt5_id ?? mt5data?.id ?? null;
+    const sol   = mt5data?.stop_out_level ?? mt5data?.stopOutLevel ?? null;
+    const mlv   = mt5data?.margin_level   ?? mt5data?.marginLevel  ?? null;
+    const mfr   = mt5data?.margin_free    ?? mt5data?.marginFree   ?? null;
+    const upnl  = mt5data?.unrealized_pnl ?? mt5data?.unrealizedPnl ?? mt5data?.floating_pl ?? null;
+
+    if (mt5id != null) document.getElementById('mt5-id').textContent = mt5id;
+    if (sol   != null) document.getElementById('stop-out-val').textContent = `${sol}%`;
+    if (mlv   != null) document.getElementById('margin-level-val').textContent = `${_fmtNum(mlv)}%`;
+    if (mfr   != null) document.getElementById('margin-free-val').textContent = _fmtNum(mfr);
+    if (upnl  != null) {
+      const el = document.getElementById('upnl-val');
+      el.textContent = (upnl >= 0 ? '+' : '') + _fmtNum(upnl);
+      el.style.color = upnl >= 0 ? '#56d364' : '#f85149';
+    }
+  } catch(_) {}
+
+  // 今日 / 昨日已实现收益
+  try {
+    const now = new Date();
+    const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const todayFrom = Math.floor(todayMidnight.getTime() / 1000);
+    const res3 = await fetch(`/api/pnl_summary?today_from=${todayFrom}`);
+    if (res3.status === 401) { window.location.href = '/login'; return; }
+    if (res3.ok) {
+      const d3 = await res3.json();
+      const _setPnl = (elId, val) => {
+        const el = document.getElementById(elId);
+        el.textContent = (val >= 0 ? '+' : '') + val.toFixed(2);
+        el.style.color = val >= 0 ? '#26a641' : '#f85149';
+      };
+      _setPnl('today-pnl-val',     d3.today_pnl);
+      _setPnl('yesterday-pnl-val', d3.yesterday_pnl);
+    }
+  } catch(_) {}
+}
+
+// ════════════════════════════════════════════
+//  侧边栏
+// ════════════════════════════════════════════
+let _sidebarExpanded = true;
+function toggleSidebar() {
+  _sidebarExpanded = !_sidebarExpanded;
+  const sb  = document.getElementById('account-sidebar');
+  const btn = document.getElementById('sidebar-toggle');
+  sb.classList.toggle('collapsed', !_sidebarExpanded);
+  btn.textContent = _sidebarExpanded ? '◂ 账户' : '▸';
+}
+
+// ════════════════════════════════════════════
+//  头寸
+// ════════════════════════════════════════════
+let _posPanelExpanded = true;
+function togglePositionsPanel() {
+  _posPanelExpanded = !_posPanelExpanded;
+  const panel  = document.getElementById('positions-panel');
+  const toggle = document.getElementById('pos-toggle');
+  panel.classList.toggle('expanded',  _posPanelExpanded);
+  panel.classList.toggle('collapsed', !_posPanelExpanded);
+  toggle.textContent = _posPanelExpanded ? '▾' : '▸';
+}
+
+async function loadPositions() {
+  try {
+    const res = await fetch('/api/positions');
+    if (res.status === 401) { window.location.href = '/login'; return; }
+    if (!res.ok) return;
+    const data  = await res.json();
+    const list  = data?.data?.list ?? [];
+    const tbody = document.getElementById('pos-tbody');
+    const empty = document.getElementById('pos-empty');
+    const count = document.getElementById('pos-count');
+    count.textContent = list.length ? `(${list.length})` : '';
+    tbody.innerHTML   = '';
+    // 计算总盈亏
+    const totalPnlEl  = document.getElementById('total-pnl-val');
+    if (!list.length) {
+      empty.style.display = '';
+      totalPnlEl.textContent = '--';
+      totalPnlEl.style.color = '';
+      return;
+    }
+    empty.style.display = 'none';
+    const totalPnl = list.reduce((s, p) => s + parseFloat(p.unrealized_pnl ?? 0), 0);
+    totalPnlEl.textContent = (totalPnl >= 0 ? '+' : '') + totalPnl.toFixed(2);
+    totalPnlEl.style.color = totalPnl >= 0 ? '#26a641' : '#f85149';
+    for (const p of list) {
+      const pnl      = parseFloat(p.unrealized_pnl ?? 0);
+      const isLong   = (p.position_dir ?? '').toLowerCase() === 'long';
+      const digits   = (p.symbol ?? '').includes('JPY') ? 3 : 5;
+      const openP    = parseFloat(p.price_open       ?? 0).toFixed(digits);
+      const curP     = parseFloat(p.counterparty_price ?? 0).toFixed(digits);
+      const margin   = parseFloat(p.margin ?? 0).toFixed(2);
+      const tp       = parseFloat(p.price_tp ?? 0);
+      const sl       = parseFloat(p.price_sl ?? 0);
+      const pnlTxt   = (pnl >= 0 ? '+' : '') + pnl.toFixed(2);
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td title="${p.symbol_desc ?? ''}">${p.symbol ?? '--'}</td>
+        <td class="${isLong ? 'dir-long' : 'dir-short'}">${isLong ? 'Long ▲' : 'Short ▼'}</td>
+        <td>${p.volume ?? '--'}</td>
+        <td>${openP}</td>
+        <td>${curP}</td>
+        <td class="${pnl >= 0 ? 'pnl-pos' : 'pnl-neg'}">${pnlTxt}</td>
+        <td>${margin}</td>
+        <td>${tp > 0 ? tp.toFixed(digits) : '--'}</td>
+        <td>${sl > 0 ? sl.toFixed(digits) : '--'}</td>
+        <td><button class="pos-edit-btn" onclick="openTPSLModal(${p.position_id},'${p.symbol ?? ''}',${tp},${sl},${digits})">设置</button>
+            <button class="pos-close-btn" onclick="openCloseConfirm(event,${p.position_id},'${p.symbol ?? ''}','${p.volume ?? '0'}')">  平仓</button></td>
+      `;
+      tbody.appendChild(tr);
+    }
+  } catch(_) {}
+}
+
+// ════════════════════════════════════════════
+//  平仓确认弹窗
+// ════════════════════════════════════════════
+// 当前要平仓的任务列表：[{ position_id, close_type, close_volume? }]
+let _closeTasks = [];
+
+function openCloseConfirm(e, posId, symbol, volume) {
+  e.stopPropagation();
+  _closeTasks = [{ position_id: posId, close_type: 2 }];
+  document.getElementById('cc-title').textContent = '确认平仓';
+  document.getElementById('close-confirm-msg').innerHTML =
+    `确认平掉 <strong style="color:#e6edf3">${symbol}</strong> 全部手数（${volume}）？<br>此操作不可撤销。`;
+  document.getElementById('cc-confirm').disabled = false;
+  document.getElementById('cc-confirm').textContent = '确认平仓';
+  document.getElementById('close-confirm-overlay').classList.remove('hidden');
+}
+
+function openCloseAllConfirm(e) {
+  e.stopPropagation();
+  const rows = document.querySelectorAll('#pos-tbody tr');
+  if (!rows.length) return;
+  // 收集所有头寸 ID，从每行的平仓按钒 onclick 属性取 posId
+  const tasks = [];
+  document.querySelectorAll('.pos-close-btn').forEach(btn => {
+    const m = btn.getAttribute('onclick').match(/openCloseConfirm\(event,(\d+)/);
+    if (m) tasks.push({ position_id: parseInt(m[1]), close_type: 2 });
+  });
+  if (!tasks.length) return;
+  _closeTasks = tasks;
+  document.getElementById('cc-title').textContent = '一键平仓';
+  document.getElementById('close-confirm-msg').innerHTML =
+    `确认平掉全部 <strong style="color:#f85149">${tasks.length}</strong> 个头寸？<br>此操作不可撤销。`;
+  document.getElementById('cc-confirm').disabled = false;
+  document.getElementById('cc-confirm').textContent = '确认全部平仓';
+  document.getElementById('close-confirm-overlay').classList.remove('hidden');
+}
+
+function closeConfirmModal() {
+  document.getElementById('close-confirm-overlay').classList.add('hidden');
+  _closeTasks = [];
+}
+
+async function _doConfirmedClose() {
+  if (!_closeTasks.length) return;
+  const btn = document.getElementById('cc-confirm');
+  btn.disabled = true;
+  btn.textContent = '平仓中…';
+  const tasks = [..._closeTasks];
+  let failed = 0;
+  for (const t of tasks) {
+    try {
+      const body = { close_type: t.close_type };
+      if (t.close_type === 1) body.close_volume = t.close_volume;
+      const res = await fetch(`/api/positions/${t.position_id}/close`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (res.status === 401) { window.location.href = '/login'; return; }
+      if (!res.ok) failed++;
+    } catch(_) { failed++; }
+  }
+  closeConfirmModal();
+  await loadPositions();
+  if (failed) alert(`有 ${failed} 个头寸平仓失败，请检查日志。`);
+}
+
+// ════════════════════════════════════════════
+//  止盈止损编辑弹窗
+// ════════════════════════════════════════════
+let _tpslPositionId = null;
+
+function openTPSLModal(posId, symbol, tp, sl, digits) {
+  _tpslPositionId = posId;
+  document.getElementById('tpsl-title').textContent = `设置止盈 / 止损 — ${symbol}`;
+  document.getElementById('tpsl-tp').value = tp > 0 ? tp.toFixed(digits) : '';
+  document.getElementById('tpsl-sl').value = sl > 0 ? sl.toFixed(digits) : '';
+  document.getElementById('tpsl-save').disabled = false;
+  document.getElementById('tpsl-save').textContent = '保存';
+  document.getElementById('tpsl-overlay').classList.remove('hidden');
+  document.getElementById('tpsl-tp').focus();
+}
+
+function closeTPSLModal() {
+  document.getElementById('tpsl-overlay').classList.add('hidden');
+  _tpslPositionId = null;
+}
+
+function _tpslBgClick(e) {
+  if (e.target === document.getElementById('tpsl-overlay')) closeTPSLModal();
+}
+
+async function saveTPSL() {
+  if (!_tpslPositionId) return;
+  const tp = document.getElementById('tpsl-tp').value.trim();
+  const sl = document.getElementById('tpsl-sl').value.trim();
+  const body = {
+    price_tp: tp !== '' ? tp : '0',
+    price_sl: sl !== '' ? sl : '0',
+  };
+  const btn = document.getElementById('tpsl-save');
+  btn.disabled = true;
+  btn.textContent = '保存中…';
+  try {
+    const res = await fetch(`/api/positions/${_tpslPositionId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (res.status === 401) { window.location.href = '/login'; return; }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert('保存失败: ' + (err.detail ?? res.status));
+      btn.disabled = false; btn.textContent = '保存';
+      return;
+    }
+    closeTPSLModal();
+    await loadPositions();   // 立即刷新头寸列表
+  } catch(e) {
+    alert('请求失败: ' + e.message);
+    btn.disabled = false; btn.textContent = '保存';
+  }
+}
+
+// ════════════════════════════════════════════
+//  退出登录
+// ════════════════════════════════════════════
+async function doLogout() {
+  // 先清除所有定时器，避免跳转前继续发出已无效的 API 请求
+  if (typeof _refreshTimer !== 'undefined' && _refreshTimer) clearInterval(_refreshTimer);
+  if (typeof _assetsTimer  !== 'undefined' && _assetsTimer)  clearInterval(_assetsTimer);
+  if (typeof _posTimer     !== 'undefined' && _posTimer)     clearInterval(_posTimer);
+  await fetch('/api/logout', { method: 'POST' }).catch(() => {});
+  window.location.href = '/login';
+}
+
+// ════════════════════════════════════════════
+//  按钮初始化
+// ════════════════════════════════════════════
+const symbolBar = document.getElementById('symbol-btns');
+SYMBOLS.forEach(sym => {
+  const btn = document.createElement('button');
+  btn.textContent = sym;
+  if (sym === currentSymbol) btn.classList.add('active');
+  btn.addEventListener('click', () => {
+    if (sym === currentSymbol) return;
+    currentSymbol = sym;
+    symbolBar.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    loadKlines(currentInterval);
+  });
+  symbolBar.appendChild(btn);
+});
+
+const intervalBar = document.getElementById('interval-btns');
+INTERVALS.forEach(iv => {
+  const btn = document.createElement('button');
+  btn.textContent = iv;
+  if (iv === currentInterval) btn.classList.add('active');
+  btn.addEventListener('click', () => {
+    if (iv === currentInterval) return;
+    currentInterval = iv;
+    intervalBar.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    loadKlines(iv);
+  });
+  intervalBar.appendChild(btn);
+});
+
+// ════════════════════════════════════════════
+//  启动
+// ════════════════════════════════════════════
+loadConfig();
+renderMABadges();
+loadKlines(currentInterval);
+loadAssets();
+loadPositions();
+// 资产信息每 3 秒刷新一次
+const _assetsTimer = setInterval(loadAssets, 3000);
+// 头寸每 0.1 秒刷新一次
+_posTimer = setInterval(loadPositions, 100);
+</script>
+</body>
+</html>
