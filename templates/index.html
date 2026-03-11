@@ -277,6 +277,64 @@
   #tpsl-save   { background: #1f6feb; border: none; color: #fff; }
   #tpsl-save:hover { background: #388bfd; }
   #tpsl-save:disabled { background: #30363d; color: #666; cursor: not-allowed; }
+
+  /* ── 数据分析弹窗 ── */
+  #analysis-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.65);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 1002; overflow-y: auto; padding: 20px;
+  }
+  #analysis-overlay.hidden { display: none; }
+  #analysis-box {
+    background: #161b22; border: 1px solid #30363d; border-radius: 12px;
+    width: 680px; max-width: 96vw; max-height: 92vh;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  #analysis-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 18px; border-bottom: 1px solid #30363d; flex-shrink: 0;
+  }
+  #analysis-header h2 { font-size: 14px; font-weight: 700; color: #e6edf3; }
+  #analysis-header .sub { font-size: 11px; color: #8b949e; margin-left: 8px; }
+  #analysis-close { cursor: pointer; color: #8b949e; font-size: 22px; line-height: 1; }
+  #analysis-close:hover { color: #e6edf3; }
+  #analysis-body { flex: 1; overflow-y: auto; padding: 16px 18px 20px; }
+  #analysis-loading { text-align: center; padding: 40px; color: #8b949e; font-size: 13px; }
+  .an-section-title {
+    font-size: 10px; font-weight: 700; color: #8b949e;
+    letter-spacing: .8px; text-transform: uppercase;
+    padding: 10px 0 6px; border-bottom: 1px solid #21262d; margin-bottom: 8px;
+  }
+  .an-grid {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 6px 16px; margin-bottom: 4px;
+  }
+  .an-row {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding: 4px 8px; border-radius: 5px;
+  }
+  .an-row:hover { background: #1c2128; }
+  .an-label { font-size: 12px; color: #8b949e; }
+  .an-val   { font-size: 12px; font-weight: 600; color: #e6edf3; text-align: right; }
+  .an-val.pos { color: #56d364; }
+  .an-val.neg { color: #f85149; }
+  .an-val.neu { color: #79c0ff; }
+  .an-highlight {
+    display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap;
+  }
+  .an-card {
+    flex: 1; min-width: 120px;
+    background: #0d1117; border: 1px solid #30363d; border-radius: 8px;
+    padding: 10px 14px;
+  }
+  .an-card .card-label { font-size: 11px; color: #8b949e; margin-bottom: 4px; }
+  .an-card .card-val   { font-size: 18px; font-weight: 700; }
+  #btn-analysis {
+    width: calc(100% - 28px); margin: 10px 14px 4px;
+    padding: 6px 0; background: #1f6feb; border: none; border-radius: 6px;
+    color: #fff; font-size: 12px; cursor: pointer; transition: background .15s;
+  }
+  #btn-analysis:hover { background: #388bfd; }
 </style>
 </head>
 <body>
@@ -388,6 +446,10 @@
       <span class="sr-val" id="yesterday-pnl-val">--</span>
     </div>
 
+    <hr class="sidebar-divider">
+
+    <button id="btn-analysis" onclick="openAnalysis()">📊 数据分析报告</button>
+
   </div>
 </div><!-- /#account-sidebar -->
 
@@ -421,6 +483,19 @@
     <div class="tpsl-actions">
       <button id="tpsl-cancel" onclick="closeTPSLModal()">取消</button>
       <button id="tpsl-save"   onclick="saveTPSL()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── 数据分析弹窗 ── -->
+<div id="analysis-overlay" class="hidden" onclick="_analysisBgClick(event)">
+  <div id="analysis-box">
+    <div id="analysis-header">
+      <div><h2 style="display:inline">交易分析报告</h2><span class="sub" id="analysis-period">最近30天</span></div>
+      <span id="analysis-close" onclick="closeAnalysis()">×</span>
+    </div>
+    <div id="analysis-body">
+      <div id="analysis-loading">加载中…</div>
     </div>
   </div>
 </div>
@@ -1204,6 +1279,132 @@ async function saveTPSL() {
   } catch(e) {
     alert('请求失败: ' + e.message);
     btn.disabled = false; btn.textContent = '保存';
+  }
+}
+
+// ════════════════════════════════════════════
+//  数据分析报告
+// ════════════════════════════════════════════
+function openAnalysis() {
+  document.getElementById('analysis-overlay').classList.remove('hidden');
+  document.getElementById('analysis-body').innerHTML = '<div id="analysis-loading">数据加载中，请稍候…</div>';
+  fetchAnalysis();
+}
+function closeAnalysis() {
+  document.getElementById('analysis-overlay').classList.add('hidden');
+}
+function _analysisBgClick(e) {
+  if (e.target === document.getElementById('analysis-overlay')) closeAnalysis();
+}
+
+function _signPnl(v, digits = 2) {
+  if (typeof v !== 'number') return { text: String(v), cls: 'neu' };
+  const text = (v >= 0 ? '+' : '') + v.toFixed(digits);
+  return { text, cls: v > 0 ? 'pos' : v < 0 ? 'neg' : '' };
+}
+function _pct(v) { return typeof v === 'number' ? v.toFixed(1) + '%' : String(v); }
+function _num(v, d = 2) {
+  if (typeof v !== 'number') return String(v);
+  return Number(v).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+}
+
+function _row(label, valHtml) {
+  return `<div class="an-row"><span class="an-label">${label}</span><span class="an-val">${valHtml}</span></div>`;
+}
+
+function renderAnalysis(d) {
+  if (!d.total_trades) {
+    document.getElementById('analysis-body').innerHTML =
+      '<div style="text-align:center;padding:40px;color:#8b949e">暂无历史交易数据</div>';
+    return;
+  }
+  const np = _signPnl(d.net_profit);
+  const gp = _signPnl(d.gross_profit);
+  const gl = _signPnl(d.gross_loss);
+  const ep = _signPnl(d.expected_payoff);
+  const mp = _signPnl(d.max_profit_trade);
+  const ml = _signPnl(d.max_loss_trade);
+  const ap = _signPnl(d.avg_profit_trade);
+  const al = _signPnl(d.avg_loss_trade);
+  const cws = _signPnl(d.max_consec_win_sum);
+  const cls_ = _signPnl(d.max_consec_loss_sum);
+
+  const pfCls = (d.profit_factor === '∞' || d.profit_factor >= 2) ? 'pos'
+              : d.profit_factor >= 1 ? 'neu' : 'neg';
+  const shCls = d.sharpe_ratio > 1 ? 'pos' : d.sharpe_ratio > 0 ? 'neu' : 'neg';
+
+  document.getElementById('analysis-body').innerHTML = `
+    <!-- 核心指标卡 -->
+    <div class="an-highlight">
+      <div class="an-card">
+        <div class="card-label">总净盈利</div>
+        <div class="card-val ${np.cls}">${np.text}</div>
+      </div>
+      <div class="an-card">
+        <div class="card-label">盈利因子</div>
+        <div class="card-val ${pfCls}">${d.profit_factor}</div>
+      </div>
+      <div class="an-card">
+        <div class="card-label">夏普比率</div>
+        <div class="card-val ${shCls}">${_num(d.sharpe_ratio)}</div>
+      </div>
+      <div class="an-card">
+        <div class="card-label">预期收益</div>
+        <div class="card-val ${ep.cls}">${ep.text}</div>
+      </div>
+    </div>
+
+    <!-- 收益概览 -->
+    <div class="an-section-title">收益概览</div>
+    <div class="an-grid">
+      ${_row('毛利', `<span class="pos">+${_num(d.gross_profit)}</span>`)}
+      ${_row('毛损', `<span class="neg">${_num(d.gross_loss)}</span>`)}
+      ${_row('采收率', `<span class="neu">${d.recovery_factor}</span>`)}
+      ${_row('夏普比率', `<span class="${shCls}">${_num(d.sharpe_ratio)}</span>`)}
+    </div>
+
+    <!-- 交易统计 -->
+    <div class="an-section-title">交易统计</div>
+    <div class="an-grid">
+      ${_row('交易笔数总计', `<span class="neu">${d.total_trades}</span>`)}
+      ${_row('买入交易 (赢得 %)', `${d.long_trades} 笔 &nbsp;<span class="${d.long_win_pct>=50?'pos':'neg'}">${_pct(d.long_win_pct)}</span>`)}
+      ${_row('卖出交易 (赢得 %)', `${d.short_trades} 笔 &nbsp;<span class="${d.short_win_pct>=50?'pos':'neg'}">${_pct(d.short_win_pct)}</span>`)}
+      ${_row('盈利交易 (% 全部)', `<span class="pos">${_pct(d.profit_pct)}</span>`)}
+      ${_row('亏损交易 (% 全部)', `<span class="neg">${_pct(d.loss_pct)}</span>`)}
+    </div>
+
+    <!-- 单笔极值 -->
+    <div class="an-section-title">单笔极值</div>
+    <div class="an-grid">
+      ${_row('最大 获利交易', `<span class="${mp.cls}">${mp.text}</span>`)}
+      ${_row('最大 亏损交易', `<span class="${ml.cls}">${ml.text}</span>`)}
+      ${_row('平均 获利交易', `<span class="${ap.cls}">${ap.text}</span>`)}
+      ${_row('平均 亏损交易', `<span class="${al.cls}">${al.text}</span>`)}
+    </div>
+
+    <!-- 连续统计 -->
+    <div class="an-section-title">连续统计</div>
+    <div class="an-grid">
+      ${_row('最大值 连胜 ($)', `<span class="pos">${cws.text}</span>`)}
+      ${_row('最大值 连败 ($)', `<span class="neg">${cls_.text}</span>`)}
+      ${_row('极大值 连续获利 (count)', `<span class="pos">${d.max_consec_win_count}</span>`)}
+      ${_row('极大值 连续亏损 (count)', `<span class="neg">${d.max_consec_loss_count}</span>`)}
+      ${_row('平均 连胜', `<span class="neu">${d.avg_consec_win}</span>`)}
+      ${_row('平均 连败', `<span class="neu">${d.avg_consec_loss}</span>`)}
+    </div>
+  `;
+}
+
+async function fetchAnalysis() {
+  try {
+    const res = await fetch('/api/trade_analysis');
+    if (res.status === 401) { window.location.href = '/login'; return; }
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    renderAnalysis(data);
+  } catch(e) {
+    document.getElementById('analysis-body').innerHTML =
+      `<div style="text-align:center;padding:40px;color:#f85149">加载失败: ${e.message}</div>`;
   }
 }
 

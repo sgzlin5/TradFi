@@ -8,6 +8,7 @@ import base64
 import hashlib
 import hmac
 import json
+import math
 import os
 import secrets
 import time
@@ -390,6 +391,150 @@ def api_pnl_summary(
     return JSONResponse({
         "today_pnl":     round(today_pnl,     2),
         "yesterday_pnl": round(yesterday_pnl, 2),
+    })
+
+
+# ── 交易分析（最近30天）──────────────────────
+@app.get("/api/trade_analysis")
+def api_trade_analysis(request: Request):
+    creds = _get_creds(request)
+    if not creds:
+        raise HTTPException(401, detail="未登录")
+
+    now_ts  = int(time.time())
+    from_ts = now_ts - 30 * 86400  # 最近30天
+
+    try:
+        records = get_position_history(*creds, from_ts, now_ts)
+    except Exception as e:
+        raise HTTPException(502, detail=str(e))
+
+    if not records:
+        return JSONResponse({"total_trades": 0})
+
+    # 将每笔交易抽成 {pnl, dir} 列表
+    trades = []
+    for r in records:
+        pnl = float(r.get("realized_pnl") or 0)
+        direction = (r.get("position_dir") or "").lower()
+        trades.append({"pnl": pnl, "dir": direction})
+
+    pnls         = [t["pnl"] for t in trades]
+    profits      = [p for p in pnls if p > 0]
+    losses       = [p for p in pnls if p < 0]
+    total_trades = len(pnls)
+    net_profit   = sum(pnls)
+    gross_profit = sum(profits)
+    gross_loss   = sum(losses)   # 负数
+
+    def _fmt(v):
+        if v == float("inf") or v != v:
+            return "∞"
+        return round(v, 2)
+
+    profit_factor = _fmt(gross_profit / abs(gross_loss)) if gross_loss else "∞"
+
+    # 最大回撤 → 采收率
+    equity = peak = max_dd = 0.0
+    for p in pnls:
+        equity += p
+        if equity > peak:
+            peak = equity
+        dd = peak - equity
+        if dd > max_dd:
+            max_dd = dd
+    recovery_factor = _fmt(net_profit / max_dd) if max_dd > 0 else "∞"
+
+    expected_payoff = round(net_profit / total_trades, 2) if total_trades else 0
+
+    # 简化夏普比率（使用逐笔P&L）
+    if len(pnls) > 1:
+        mean_pnl = net_profit / total_trades
+        variance = sum((p - mean_pnl) ** 2 for p in pnls) / (len(pnls) - 1)
+        std_pnl  = math.sqrt(variance) if variance > 0 else 0
+        sharpe   = round((mean_pnl / std_pnl) * math.sqrt(total_trades), 2) if std_pnl else 0
+    else:
+        sharpe = 0
+
+    # 买入/卖出胜率
+    long_trades  = [t["pnl"] for t in trades if t["dir"] == "long"]
+    short_trades = [t["pnl"] for t in trades if t["dir"] == "short"]
+    long_win_pct  = round(sum(1 for p in long_trades  if p > 0) / len(long_trades)  * 100, 1) if long_trades  else 0
+    short_win_pct = round(sum(1 for p in short_trades if p > 0) / len(short_trades) * 100, 1) if short_trades else 0
+
+    profit_pct = round(len(profits) / total_trades * 100, 1) if total_trades else 0
+    loss_pct   = round(len(losses)  / total_trades * 100, 1) if total_trades else 0
+
+    max_profit = round(max(profits), 2) if profits else 0
+    max_loss   = round(min(losses),  2) if losses  else 0
+    avg_profit = round(sum(profits) / len(profits), 2) if profits else 0
+    avg_loss   = round(sum(losses)  / len(losses),  2) if losses  else 0
+
+    # 连胜/连败统计
+    max_cw_count = max_cl_count = 0
+    max_cw_sum   = max_cl_sum   = 0.0
+    cur_wc = cur_lc = 0
+    cur_ws = cur_ls = 0.0
+    cw_counts: list = []
+    cl_counts: list = []
+
+    for p in pnls:
+        if p > 0:
+            cur_wc += 1
+            cur_ws += p
+            if cur_lc > 0:
+                cl_counts.append(cur_lc)
+                cur_lc = 0
+                cur_ls = 0.0
+            if cur_wc > max_cw_count:
+                max_cw_count = cur_wc
+            if cur_ws > max_cw_sum:
+                max_cw_sum = cur_ws
+        elif p < 0:
+            cur_lc += 1
+            cur_ls += p
+            if cur_wc > 0:
+                cw_counts.append(cur_wc)
+                cur_wc = 0
+                cur_ws = 0.0
+            if cur_lc > max_cl_count:
+                max_cl_count = cur_lc
+            if cur_ls < max_cl_sum:
+                max_cl_sum = cur_ls
+
+    if cur_wc > 0:
+        cw_counts.append(cur_wc)
+    if cur_lc > 0:
+        cl_counts.append(cur_lc)
+
+    avg_cw = round(sum(cw_counts) / len(cw_counts), 1) if cw_counts else 0
+    avg_cl = round(sum(cl_counts) / len(cl_counts), 1) if cl_counts else 0
+
+    return JSONResponse({
+        "net_profit":            round(net_profit, 2),
+        "profit_factor":         profit_factor,
+        "recovery_factor":       recovery_factor,
+        "expected_payoff":       expected_payoff,
+        "sharpe_ratio":          sharpe,
+        "gross_profit":          round(gross_profit, 2),
+        "gross_loss":            round(gross_loss, 2),
+        "total_trades":          total_trades,
+        "long_trades":           len(long_trades),
+        "short_trades":          len(short_trades),
+        "long_win_pct":          long_win_pct,
+        "short_win_pct":         short_win_pct,
+        "profit_pct":            profit_pct,
+        "loss_pct":              loss_pct,
+        "max_profit_trade":      max_profit,
+        "max_loss_trade":        max_loss,
+        "avg_profit_trade":      avg_profit,
+        "avg_loss_trade":        avg_loss,
+        "max_consec_win_sum":    round(max_cw_sum, 2),
+        "max_consec_loss_sum":   round(max_cl_sum, 2),
+        "max_consec_win_count":  max_cw_count,
+        "max_consec_loss_count": max_cl_count,
+        "avg_consec_win":        avg_cw,
+        "avg_consec_loss":       avg_cl,
     })
 
 
