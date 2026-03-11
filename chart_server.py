@@ -447,12 +447,12 @@ def api_trade_analysis(request: Request):
 
     expected_payoff = round(net_profit / total_trades, 2) if total_trades else 0
 
-    # 简化夏普比率（使用逐笔P&L）
+    # 逐笔夏普比率 = 均值 / 标准差（样本标准差）
     if len(pnls) > 1:
         mean_pnl = net_profit / total_trades
         variance = sum((p - mean_pnl) ** 2 for p in pnls) / (len(pnls) - 1)
         std_pnl  = math.sqrt(variance) if variance > 0 else 0
-        sharpe   = round((mean_pnl / std_pnl) * math.sqrt(total_trades), 2) if std_pnl else 0
+        sharpe   = round(mean_pnl / std_pnl, 2) if std_pnl else 0
     else:
         sharpe = 0
 
@@ -482,7 +482,7 @@ def api_trade_analysis(request: Request):
         if p > 0:
             cur_wc += 1
             cur_ws += p
-            if cur_lc > 0:
+            if cur_lc > 0:           # 平局/获利中断亏损序列
                 cl_counts.append(cur_lc)
                 cur_lc = 0
                 cur_ls = 0.0
@@ -493,7 +493,7 @@ def api_trade_analysis(request: Request):
         elif p < 0:
             cur_lc += 1
             cur_ls += p
-            if cur_wc > 0:
+            if cur_wc > 0:           # 平局/亏损中断盈利序列
                 cw_counts.append(cur_wc)
                 cur_wc = 0
                 cur_ws = 0.0
@@ -501,6 +501,15 @@ def api_trade_analysis(request: Request):
                 max_cl_count = cur_lc
             if cur_ls < max_cl_sum:
                 max_cl_sum = cur_ls
+        else:                        # p == 0 平局，中断当前任意序列
+            if cur_wc > 0:
+                cw_counts.append(cur_wc)
+                cur_wc = 0
+                cur_ws = 0.0
+            if cur_lc > 0:
+                cl_counts.append(cur_lc)
+                cur_lc = 0
+                cur_ls = 0.0
 
     if cur_wc > 0:
         cw_counts.append(cur_wc)
