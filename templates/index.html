@@ -1392,6 +1392,9 @@ function renderAnalysis(d) {
       ${_row('平均 连胜', `<span class="neu">${d.avg_consec_win}</span>`)}
       ${_row('平均 连败', `<span class="neu">${d.avg_consec_loss}</span>`)}
     </div>
+
+    <!-- 收益率曲线图 -->
+    ${d.equity_curve_chart ? `<div class="an-section-title">累计收益率曲线</div><div style="margin-top:8px;text-align:center"><img src="${d.equity_curve_chart}" style="max-width:100%;border-radius:8px;border:1px solid #30363d" alt="收益曲线"></div>` : ''}
   `;
 }
 

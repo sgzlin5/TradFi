@@ -7,6 +7,7 @@ TradFi K 线可视化 Web 服务
 import base64
 import hashlib
 import hmac
+import io
 import json
 import math
 import os
@@ -15,6 +16,10 @@ import time
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import numpy as np
 import requests
 import uvicorn
 import pandas as pd
@@ -441,8 +446,10 @@ def api_trade_analysis(request: Request):
     # ── 采收率（手动：基于绝对 P&L 曲线的最大回撤）─────────────
     # quantstats.recovery_factor 内部使用复利百分比回撤，不适用于原始 P&L
     equity = peak = max_dd = 0.0
+    equity_curve = []
     for p in pnls:
         equity += p
+        equity_curve.append(equity)
         if equity > peak:
             peak = equity
         dd = peak - equity
@@ -453,6 +460,28 @@ def api_trade_analysis(request: Request):
         recovery_factor = "∞" if (math.isinf(rf_val) or math.isnan(rf_val)) else round(rf_val, 2)
     else:
         recovery_factor = "∞"
+    
+    # ── 收益率曲线图 ────────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(10, 5), dpi=100)
+    ax.plot(range(1, len(equity_curve) + 1), equity_curve, linewidth=1.5, color='#2563eb')
+    ax.axhline(y=0, color='gray', linestyle='--', linewidth=0.8, alpha=0.7)
+    ax.fill_between(range(1, len(equity_curve) + 1), equity_curve, y2=0, where=(np.array(equity_curve) >= 0), 
+                    interpolate=True, color='#2563eb', alpha=0.3)
+    ax.fill_between(range(1, len(equity_curve) + 1), equity_curve, y2=0, where=(np.array(equity_curve) < 0), 
+                    interpolate=True, color='#dc2626', alpha=0.3)
+    ax.set_title('累计收益率曲线', fontsize=14, fontweight='bold', pad=15)
+    ax.set_xlabel('交易笔数', fontsize=12)
+    ax.set_ylabel('P&L', fontsize=12)
+    ax.grid(True, linestyle=':', alpha=0.6)
+    ax.tick_params(labelsize=10)
+    plt.tight_layout()
+    
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', bbox_inches='tight', dpi=100, facecolor='white', edgecolor='none')
+    buf.seek(0)
+    img_base64 = base64.b64encode(buf.getvalue()).decode('utf-8')
+    plt.close(fig)
+    buf.close()
 
     # ── 预期收益（pandas 算术均值）───────────────────────────────
     # qs.expected_return 默认复利，此处用算术均值更符合"每笔预期盈亏"含义
@@ -551,6 +580,7 @@ def api_trade_analysis(request: Request):
         "max_consec_loss_count": max_cl_count,
         "avg_consec_win":        avg_cw,
         "avg_consec_loss":       avg_cl,
+        "equity_curve_chart":    f"data:image/png;base64,{img_base64}",
     })
 
 
