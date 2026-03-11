@@ -477,8 +477,8 @@ def api_trade_analysis(request: Request):
                     interpolate=True, color='#2563eb', alpha=0.3)
     ax.fill_between(range(1, len(equity_curve) + 1), equity_curve, y2=0, where=(np.array(equity_curve) < 0), 
                     interpolate=True, color='#dc2626', alpha=0.3)
-    ax.set_title('累计收益率曲线', fontsize=14, fontweight='bold', pad=15)
-    ax.set_xlabel('交易笔数', fontsize=12)
+    ax.set_title('Cumulative Return Curve', fontsize=14, fontweight='bold', pad=15)
+    ax.set_xlabel('Number of Trades', fontsize=12)
     ax.set_ylabel('P&L', fontsize=12)
     ax.grid(True, linestyle=':', alpha=0.6)
     ax.tick_params(labelsize=10)
