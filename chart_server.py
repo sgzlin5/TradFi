@@ -18,6 +18,14 @@ from typing import Dict, Optional, Tuple
 
 import matplotlib
 matplotlib.use('Agg')
+# 优先使用 Windows 系统中文字体，回退到 macOS / Linux 常见字体
+matplotlib.rcParams['font.family'] = [
+    'Microsoft YaHei', 'SimHei',          # Windows
+    'PingFang SC', 'Heiti TC',             # macOS
+    'WenQuanYi Micro Hei', 'Noto Sans CJK SC',  # Linux
+    'DejaVu Sans',                         # 最终回退
+]
+matplotlib.rcParams['axes.unicode_minus'] = False   # 负号用 ASCII '-' 渲染，避免乱码
 import matplotlib.pyplot as plt
 import numpy as np
 import requests
