@@ -217,6 +217,18 @@
     cursor: pointer; transition: all .15s; margin-left: 6px;
   }
   #btn-close-all:hover { background: #f85149; color: #fff; }
+  #btn-close-profit {
+    padding: 2px 10px; border: 1px solid #26a641; border-radius: 4px;
+    background: transparent; color: #26a641; font-size: 11px;
+    cursor: pointer; transition: all .15s; margin-left: 6px;
+  }
+  #btn-close-profit:hover { background: #26a641; color: #fff; }
+  #btn-close-loss {
+    padding: 2px 10px; border: 1px solid #e3b341; border-radius: 4px;
+    background: transparent; color: #e3b341; font-size: 11px;
+    cursor: pointer; transition: all .15s; margin-left: 6px;
+  }
+  #btn-close-loss:hover { background: #e3b341; color: #fff; }
 
   /* ── 关闭确认弹窗 ── */
   #close-confirm-overlay {
@@ -372,7 +384,9 @@
   <div id="pos-header" onclick="togglePositionsPanel()">
     <span id="pos-title">持仓</span>
     <span id="pos-count"></span>
-    <button id="btn-close-all" onclick="openCloseAllConfirm(event)" title="平掉所有头寸">一键平仓</button>
+    <button id="btn-close-all"    onclick="openCloseAllConfirm(event)"    title="平掉所有头寸">一键平仓</button>
+    <button id="btn-close-profit" onclick="openCloseProfitConfirm(event)" title="平掉所有盈利头寸">平盈利</button>
+    <button id="btn-close-loss"   onclick="openCloseLossConfirm(event)"   title="平掉所有亏损头寸">平亏损</button>
     <span id="pos-toggle">▾</span>
   </div>
   <div id="pos-body">
@@ -1151,7 +1165,7 @@ async function loadPositions() {
         <td>${tp > 0 ? tp.toFixed(digits) : '--'}</td>
         <td>${sl > 0 ? sl.toFixed(digits) : '--'}</td>
         <td><button class="pos-edit-btn" onclick="openTPSLModal(${p.position_id},'${p.symbol ?? ''}',${tp},${sl},${digits})">设置</button>
-            <button class="pos-close-btn" onclick="openCloseConfirm(event,${p.position_id},'${p.symbol ?? ''}','${p.volume ?? '0'}')">  平仓</button></td>
+            <button class="pos-close-btn" data-pnl="${pnl}" onclick="openCloseConfirm(event,${p.position_id},'${p.symbol ?? ''}','${p.volume ?? '0'}')">  平仓</button></td>
       `;
       tbody.appendChild(tr);
     }
@@ -1175,16 +1189,20 @@ function openCloseConfirm(e, posId, symbol, volume) {
   document.getElementById('close-confirm-overlay').classList.remove('hidden');
 }
 
-function openCloseAllConfirm(e) {
-  e.stopPropagation();
-  const rows = document.querySelectorAll('#pos-tbody tr');
-  if (!rows.length) return;
-  // 收集所有头寸 ID，从每行的平仓按钒 onclick 属性取 posId
+function _collectTasks(filter) {
   const tasks = [];
   document.querySelectorAll('.pos-close-btn').forEach(btn => {
     const m = btn.getAttribute('onclick').match(/openCloseConfirm\(event,(\d+)/);
-    if (m) tasks.push({ position_id: parseInt(m[1]), close_type: 2 });
+    if (!m) return;
+    const pnl = parseFloat(btn.dataset.pnl ?? '0');
+    if (filter(pnl)) tasks.push({ position_id: parseInt(m[1]), close_type: 2 });
   });
+  return tasks;
+}
+
+function openCloseAllConfirm(e) {
+  e.stopPropagation();
+  const tasks = _collectTasks(() => true);
   if (!tasks.length) return;
   _closeTasks = tasks;
   document.getElementById('cc-title').textContent = '一键平仓';
@@ -1192,6 +1210,32 @@ function openCloseAllConfirm(e) {
     `确认平掉全部 <strong style="color:#f85149">${tasks.length}</strong> 个头寸？<br>此操作不可撤销。`;
   document.getElementById('cc-confirm').disabled = false;
   document.getElementById('cc-confirm').textContent = '确认全部平仓';
+  document.getElementById('close-confirm-overlay').classList.remove('hidden');
+}
+
+function openCloseProfitConfirm(e) {
+  e.stopPropagation();
+  const tasks = _collectTasks(pnl => pnl > 0);
+  if (!tasks.length) return;
+  _closeTasks = tasks;
+  document.getElementById('cc-title').textContent = '平盈利头寸';
+  document.getElementById('close-confirm-msg').innerHTML =
+    `确认平掉全部 <strong style="color:#26a641">${tasks.length}</strong> 个盈利头寸？<br>此操作不可撤销。`;
+  document.getElementById('cc-confirm').disabled = false;
+  document.getElementById('cc-confirm').textContent = '确认平盈利';
+  document.getElementById('close-confirm-overlay').classList.remove('hidden');
+}
+
+function openCloseLossConfirm(e) {
+  e.stopPropagation();
+  const tasks = _collectTasks(pnl => pnl < 0);
+  if (!tasks.length) return;
+  _closeTasks = tasks;
+  document.getElementById('cc-title').textContent = '平亏损头寸';
+  document.getElementById('close-confirm-msg').innerHTML =
+    `确认平掉全部 <strong style="color:#e3b341">${tasks.length}</strong> 个亏损头寸？<br>此操作不可撤销。`;
+  document.getElementById('cc-confirm').disabled = false;
+  document.getElementById('cc-confirm').textContent = '确认平亏损';
   document.getElementById('close-confirm-overlay').classList.remove('hidden');
 }
 
