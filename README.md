@@ -87,3 +87,29 @@ tradfi/
 ## 参考文档
 
 - [Gate.io API v4 文档](https://www.gate.com/docs/developers/apiv4/)
+
+## Docker 部署
+
+1. 构建镜像
+
+```bash
+docker build -t tradfi .
+```
+
+2. 启动容器
+
+```bash
+docker run -p 8000:8000 tradfi
+```
+
+3. 浏览器访问
+
+```
+http://localhost:8000
+```
+
+### 说明
+- Dockerfile 已包含依赖安装与代码拷贝
+- requirements.txt 已列出全部依赖
+- 默认入口为 chart_server.py
+- 如需后台运行可加 `-d` 参数

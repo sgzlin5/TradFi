@@ -1,0 +1,8 @@
+version: '3.8'
+services:
+  tradfi:
+    build: .
+    container_name: tradfi
+    ports:
+      - "8000:8000"
+    restart: unless-stopped

@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+itsdangerous
+matplotlib
+numpy
+pandas
+quantstats-reloaded
