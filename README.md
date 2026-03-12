@@ -59,7 +59,6 @@ tradfi/
 ├── demo.py             # API 调用示例
 ├── config.enc          # 加密的配置文件
 ├── encrpty.py         # 配置加密工具
-├── config_load.py     # 配置加载工具
 ├── templates/
 │   ├── index.html     # K线图表前端页面
 │   └── login.html    # 登录页面
