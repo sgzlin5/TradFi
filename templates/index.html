@@ -229,6 +229,18 @@
     cursor: pointer; transition: all .15s; margin-left: 6px;
   }
   #btn-close-loss:hover { background: #e3b341; color: #fff; }
+  #btn-tpsl-long {
+    padding: 2px 10px; border: 1px solid #26a641; border-radius: 4px;
+    background: transparent; color: #26a641; font-size: 11px;
+    cursor: pointer; transition: all .15s; margin-left: 6px;
+  }
+  #btn-tpsl-long:hover { background: #26a641; color: #fff; }
+  #btn-tpsl-short {
+    padding: 2px 10px; border: 1px solid #58a6ff; border-radius: 4px;
+    background: transparent; color: #58a6ff; font-size: 11px;
+    cursor: pointer; transition: all .15s; margin-left: 6px;
+  }
+  #btn-tpsl-short:hover { background: #58a6ff; color: #fff; }
 
   /* ── 关闭确认弹窗 ── */
   #close-confirm-overlay {
@@ -387,6 +399,8 @@
     <button id="btn-close-all"    onclick="openCloseAllConfirm(event)"    title="平掉所有头寸">一键平仓</button>
     <button id="btn-close-profit" onclick="openCloseProfitConfirm(event)" title="平掉所有盈利头寸">平盈利</button>
     <button id="btn-close-loss"   onclick="openCloseLossConfirm(event)"   title="平掉所有亏损头寸">平亏损</button>
+    <button id="btn-tpsl-long"  onclick="openBatchTPSLModal('long')"  title="批量设置多仓止盈止损">多仓 TP/SL</button>
+    <button id="btn-tpsl-short" onclick="openBatchTPSLModal('short')" title="批量设置空仓止盈止损">空仓 TP/SL</button>
     <span id="pos-toggle">▾</span>
   </div>
   <div id="pos-body">
@@ -568,9 +582,11 @@
 const SYMBOLS   = ['XAUUSD', 'NAS100'];
 const INTERVALS = ['1m','5m','15m','30m','1h','4h','1d'];
 // 每个周期对应的自动刷新间隔（毫秒）
-const REFRESH_MS = { '1m':100,'5m':100,'15m':100,'30m':100,'1h':100,'4h':100,'1d':100 };
-let _refreshTimer = null;
-let _posTimer     = null;
+const REFRESH_MS = { '1m':5,'5m':5,'15m':5,'30m':5,'1h':5,'4h':5,'1d':5 };
+let _refreshTimer    = null;
+let _silentRefreshing = false;   // 防止并发刷新请求堆积
+let _macdFitted      = false;    // MACD 面板只 fitContent 一次，避免缩放被重置
+let _posTimer        = null;
 let currentSymbol   = 'XAUUSD';
 let currentInterval = '1m';
 let currentCandles  = [];
@@ -641,6 +657,7 @@ function createMacdChart() {
 function destroyMacdChart() {
   if (macdChart) { macdChart.remove(); macdChart = null; }
   macdLineSeries = signalLineSeries = histSeries = null;
+  _macdFitted = false;
 }
 
 // ════════════════════════════════════════════
@@ -759,7 +776,8 @@ function renderAllIndicators() {
     histSeries.setData(times.map((t, i) => hist[i] != null
       ? { time: t, value: hist[i], color: histColor(hist, i) }
       : null).filter(Boolean));
-    macdChart.timeScale().fitContent();
+    // 仅首次创建时 fitContent，后续刷新不重置视图缩放
+    if (!_macdFitted) { macdChart.timeScale().fitContent(); _macdFitted = true; }
   } else {
     const panel = document.getElementById('macd-panel');
     if (!panel.classList.contains('hidden')) {
@@ -971,6 +989,7 @@ async function loadKlines(interval) {
     const data = await res.json();
     currentCandles = data.candles;
     candleSeries.setData(currentCandles);
+    _macdFitted = false;   // 新数据加载，允许 MACD 重新 fitContent 一次
     renderAllIndicators();
     mainChart.timeScale().fitContent();
     const last = currentCandles.at(-1);
@@ -992,6 +1011,8 @@ function startAutoRefresh() {
 
 // 无闪烁新数据更新（保持视图不重置）
 async function silentRefresh() {
+  if (_silentRefreshing) return;   // 上一次请求尚未完成，跳过本次
+  _silentRefreshing = true;
   try {
     const res = await fetch(`/api/klines?symbol=${currentSymbol}&interval=${currentInterval}&limit=3`);
     if (res.status === 401) { window.location.href = '/login'; return; }
@@ -1021,7 +1042,10 @@ async function silentRefresh() {
     if (last) document.getElementById('symbol-title').textContent =
       `${currentSymbol}  ${currentInterval}  ${last.close.toFixed(2)}`;
     document.getElementById('kline-status').textContent = `${currentCandles.length} 根K线`;
-  } catch(_) {}
+  } catch(_) {
+  } finally {
+    _silentRefreshing = false;
+  }
 }
 
 // ════════════════════════════════════════════
@@ -1164,7 +1188,7 @@ async function loadPositions() {
         <td>${margin}</td>
         <td>${tp > 0 ? tp.toFixed(digits) : '--'}</td>
         <td>${sl > 0 ? sl.toFixed(digits) : '--'}</td>
-        <td><button class="pos-edit-btn" onclick="openTPSLModal(${p.position_id},'${p.symbol ?? ''}',${tp},${sl},${digits})">设置</button>
+        <td><button class="pos-edit-btn" data-posid="${p.position_id}" data-dir="${(p.position_dir ?? '').toLowerCase()}" onclick="openTPSLModal(${p.position_id},'${p.symbol ?? ''}',${tp},${sl},${digits})">设置</button>
             <button class="pos-close-btn" data-pnl="${pnl}" onclick="openCloseConfirm(event,${p.position_id},'${p.symbol ?? ''}','${p.volume ?? '0'}')">  平仓</button></td>
       `;
       tbody.appendChild(tr);
@@ -1273,9 +1297,11 @@ async function _doConfirmedClose() {
 //  止盈止损编辑弹窗
 // ════════════════════════════════════════════
 let _tpslPositionId = null;
+let _tpslBatchDir   = null;   // 'long' | 'short' | null
 
 function openTPSLModal(posId, symbol, tp, sl, digits) {
   _tpslPositionId = posId;
+  _tpslBatchDir   = null;
   document.getElementById('tpsl-title').textContent = `设置止盈 / 止损 — ${symbol}`;
   document.getElementById('tpsl-tp').value = tp > 0 ? tp.toFixed(digits) : '';
   document.getElementById('tpsl-sl').value = sl > 0 ? sl.toFixed(digits) : '';
@@ -1285,9 +1311,25 @@ function openTPSLModal(posId, symbol, tp, sl, digits) {
   document.getElementById('tpsl-tp').focus();
 }
 
+function openBatchTPSLModal(dir) {
+  const btns = document.querySelectorAll(`.pos-edit-btn[data-dir="${dir}"]`);
+  if (!btns.length) { alert(`当前没有${dir === 'long' ? '多' : '空'}仓头寸。`); return; }
+  _tpslPositionId = null;
+  _tpslBatchDir   = dir;
+  const label = dir === 'long' ? '多仓' : '空仓';
+  document.getElementById('tpsl-title').textContent = `批量设置 ${label} 止盈 / 止损（${btns.length} 个头寸）`;
+  document.getElementById('tpsl-tp').value = '';
+  document.getElementById('tpsl-sl').value = '';
+  document.getElementById('tpsl-save').disabled = false;
+  document.getElementById('tpsl-save').textContent = '批量保存';
+  document.getElementById('tpsl-overlay').classList.remove('hidden');
+  document.getElementById('tpsl-tp').focus();
+}
+
 function closeTPSLModal() {
   document.getElementById('tpsl-overlay').classList.add('hidden');
   _tpslPositionId = null;
+  _tpslBatchDir   = null;
 }
 
 function _tpslBgClick(e) {
@@ -1295,6 +1337,7 @@ function _tpslBgClick(e) {
 }
 
 async function saveTPSL() {
+  if (_tpslBatchDir) { await _saveBatchTPSL(); return; }
   if (!_tpslPositionId) return;
   const tp = document.getElementById('tpsl-tp').value.trim();
   const sl = document.getElementById('tpsl-sl').value.trim();
@@ -1324,6 +1367,39 @@ async function saveTPSL() {
     alert('请求失败: ' + e.message);
     btn.disabled = false; btn.textContent = '保存';
   }
+}
+
+async function _saveBatchTPSL() {
+  const tp  = document.getElementById('tpsl-tp').value.trim();
+  const sl  = document.getElementById('tpsl-sl').value.trim();
+  const body = {
+    price_tp: tp !== '' ? tp : '0',
+    price_sl: sl !== '' ? sl : '0',
+  };
+  const btn = document.getElementById('tpsl-save');
+  btn.disabled = true;
+  btn.textContent = '保存中…';
+  // 从表格行的 data-posid / data-dir 收集目标 ID
+  const ids = [];
+  document.querySelectorAll(`.pos-edit-btn[data-dir="${_tpslBatchDir}"]`).forEach(b => {
+    const id = parseInt(b.dataset.posid);
+    if (!isNaN(id)) ids.push(id);
+  });
+  let failed = 0;
+  for (const posId of ids) {
+    try {
+      const res = await fetch(`/api/positions/${posId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (res.status === 401) { window.location.href = '/login'; return; }
+      if (!res.ok) failed++;
+    } catch(_) { failed++; }
+  }
+  closeTPSLModal();
+  await loadPositions();
+  if (failed) alert(`有 ${failed} 个头寸止盈止损设置失败，请检查日志。`);
 }
 
 // ════════════════════════════════════════════
