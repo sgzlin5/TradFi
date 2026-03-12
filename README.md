@@ -37,6 +37,12 @@ python encrpty.py
 # 按提示输入加密密码
 ```
 
+**安全提示**：生成 `config.enc` 后，请立即删除明文的 `config.json` 文件：
+
+```bash
+rm config.json
+```
+
 ### 3. 启动服务
 
 ```bash
@@ -78,3 +84,7 @@ tradfi/
 - **前端**：Lightweight Charts
 - **加密**：cryptography (Fernet + PBKDF2)
 - **API**：Gate.io TradFi REST API
+
+## 参考文档
+
+- [Gate.io API v4 文档](https://www.gate.com/docs/developers/apiv4/)
