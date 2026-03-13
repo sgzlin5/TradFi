@@ -2067,7 +2067,7 @@ function renderAnalysis(d, days = 30) {
 
 async function fetchAnalysis(days = 30) {
   try {
-    const res = await fetch(`/api/trade_analysis?days=${days}`);
+    const res = await fetch(`/api/trade_analysis?days=${days}`, { cache: 'no-store' });
     if (res.status === 401) { window.location.href = '/login'; return; }
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();

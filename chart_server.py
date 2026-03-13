@@ -923,33 +923,36 @@ def api_trade_analysis(
     avg_cw = round(sum(cw_counts) / len(cw_counts), 1) if cw_counts else 0
     avg_cl = round(sum(cl_counts) / len(cl_counts), 1) if cl_counts else 0
 
-    return JSONResponse({
-        "net_profit":            net_profit,
-        "profit_factor":         profit_factor,
-        "recovery_factor":       recovery_factor,
-        "expected_payoff":       expected_payoff,
-        "sharpe_ratio":          sharpe,
-        "gross_profit":          gross_profit,
-        "gross_loss":            gross_loss,
-        "total_trades":          total_trades,
-        "long_trades":           len(long_pnls),
-        "short_trades":          len(short_pnls),
-        "long_win_pct":          long_win_pct,
-        "short_win_pct":         short_win_pct,
-        "profit_pct":            profit_pct,
-        "loss_pct":              loss_pct,
-        "max_profit_trade":      max_profit,
-        "max_loss_trade":        max_loss,
-        "avg_profit_trade":      avg_profit,
-        "avg_loss_trade":        avg_loss,
-        "max_consec_win_sum":    round(max_cw_sum, 2),
-        "max_consec_loss_sum":   round(max_cl_sum, 2),
-        "max_consec_win_count":  max_cw_count,
-        "max_consec_loss_count": max_cl_count,
-        "avg_consec_win":        avg_cw,
-        "avg_consec_loss":       avg_cl,
-        "equity_curve_chart":    f"data:image/png;base64,{img_base64}",
-    })
+    return JSONResponse(
+        content={
+            "net_profit":            net_profit,
+            "profit_factor":         profit_factor,
+            "recovery_factor":       recovery_factor,
+            "expected_payoff":       expected_payoff,
+            "sharpe_ratio":          sharpe,
+            "gross_profit":          gross_profit,
+            "gross_loss":            gross_loss,
+            "total_trades":          total_trades,
+            "long_trades":           len(long_pnls),
+            "short_trades":          len(short_pnls),
+            "long_win_pct":          long_win_pct,
+            "short_win_pct":         short_win_pct,
+            "profit_pct":            profit_pct,
+            "loss_pct":              loss_pct,
+            "max_profit_trade":      max_profit,
+            "max_loss_trade":        max_loss,
+            "avg_profit_trade":      avg_profit,
+            "avg_loss_trade":        avg_loss,
+            "max_consec_win_sum":    round(max_cw_sum, 2),
+            "max_consec_loss_sum":   round(max_cl_sum, 2),
+            "max_consec_win_count":  max_cw_count,
+            "max_consec_loss_count": max_cl_count,
+            "avg_consec_win":        avg_cw,
+            "avg_consec_loss":       avg_cl,
+            "equity_curve_chart":    f"data:image/png;base64,{img_base64}",
+        },
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 # ── 行情 Ticker WebSocket 接口（需登录）──────────
