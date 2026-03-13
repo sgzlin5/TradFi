@@ -86,6 +86,8 @@
   .ob-ask  { color: #f85149; font-size: 15px; font-weight: 700; letter-spacing: .3px; }
   .ob-bid  { color: #3fb950; font-size: 15px; font-weight: 700; letter-spacing: .3px; }
   .ob-spread { color: #e6edf3; font-size: 11px; }
+  .ob-label-ask { color: #f85149; font-size: 10px; font-weight: 600; letter-spacing: .5px; }
+  .ob-label-bid { color: #3fb950; font-size: 10px; font-weight: 600; letter-spacing: .5px; }
 
   #btn-logout {
     padding: 3px 9px; border: 1px solid #30363d; border-radius: 5px;
@@ -517,12 +519,17 @@
   <div id="sidebar-toggle" onclick="toggleSidebar()" title="收起/展开">◂ 账户</div>
   <div id="sidebar-inner">
 
-    <div class="sidebar-section-title">账户</div>
     <!-- 最优买卖报价 -->
     <div class="ob-row">
-      <span class="ob-ask" id="ob-ask">--</span>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:2px">
+        <span class="ob-label-ask">Sell</span>
+        <span class="ob-ask" id="ob-ask">--</span>
+      </div>
       <span class="ob-spread" id="ob-spread">--</span>
-      <span class="ob-bid" id="ob-bid">--</span>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:2px">
+        <span class="ob-label-bid">Buy</span>
+        <span class="ob-bid" id="ob-bid">--</span>
+      </div>
     </div>
     <div class="sidebar-row">
       <span class="sr-label">MT5 ID</span>
