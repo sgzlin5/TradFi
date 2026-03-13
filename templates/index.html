@@ -1313,15 +1313,21 @@ function connectTickerWS(symbol) {
     }
     if (!isNaN(high)) document.getElementById('ticker-high').textContent = high.toFixed(digits);
     if (!isNaN(low))  document.getElementById('ticker-low').textContent  = low.toFixed(digits);
-    // 价格范围条
-    if (!isNaN(high) && !isNaN(low) && high > low && !isNaN(last)) {
-      const pct   = Math.max(0, Math.min(100, (last - low) / (high - low) * 100));
-      const color = chgAmt > 0 ? '#26a641' : chgAmt < 0 ? '#f85149' : '#8b949e';
-      const fill  = document.getElementById('ticker-range-fill');
-      const thumb = document.getElementById('ticker-range-thumb');
-      fill.style.width      = pct.toFixed(1) + '%';
+    // 价格范围条（填充区间 = 开盘价 → 最新价）
+    const open = parseFloat(data.open_price);
+    if (!isNaN(high) && !isNaN(low) && high > low && !isNaN(last) && !isNaN(open)) {
+      const range    = high - low;
+      const lastPct  = Math.max(0, Math.min(100, (last - low) / range * 100));
+      const openPct  = Math.max(0, Math.min(100, (open - low) / range * 100));
+      const fillLeft = Math.min(lastPct, openPct);
+      const fillW    = Math.abs(lastPct - openPct);
+      const color    = last >= open ? '#26a641' : '#f85149';
+      const fill     = document.getElementById('ticker-range-fill');
+      const thumb    = document.getElementById('ticker-range-thumb');
+      fill.style.left       = fillLeft.toFixed(1) + '%';
+      fill.style.width      = fillW.toFixed(1) + '%';
       fill.style.background = color;
-      thumb.style.left      = pct.toFixed(1) + '%';
+      thumb.style.left      = lastPct.toFixed(1) + '%';
       thumb.style.borderTopColor = color;
     }
   };
