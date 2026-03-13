@@ -432,6 +432,38 @@ def api_pnl_summary(request: Request):
     })
 
 
+# ── 今日交易日记（需登录）──────────────────────
+@app.get("/api/daily_diary")
+def api_daily_diary(request: Request):
+    creds = _get_creds(request)
+    if not creds:
+        raise HTTPException(401, detail="未登录")
+    today  = date.today()
+    from_ts = int(datetime(today.year, today.month, today.day).timestamp())
+    now_ts  = int(time.time())
+    try:
+        records = get_position_history(*creds, from_ts, now_ts)
+    except Exception as e:
+        raise HTTPException(502, detail=str(e))
+
+    trades = []
+    for r in records:
+        t = int(r.get("time_close") or 0)
+        if t < from_ts:
+            continue
+        trades.append({
+            "time_close":   t,
+            "symbol":       r.get("symbol", ""),
+            "direction":    (r.get("position_dir") or "").lower(),
+            "volume":       r.get("volume", ""),
+            "price_open":   r.get("price_open", ""),
+            "price_close":  r.get("price_close") or r.get("counterparty_price") or "",
+            "realized_pnl": round(float(r.get("realized_pnl") or 0), 2),
+        })
+    trades.sort(key=lambda x: x["time_close"])
+    return JSONResponse({"date": today.isoformat(), "trades": trades})
+
+
 # ── 交易分析（最近30天）──────────────────────
 @app.get("/api/trade_analysis")
 def api_trade_analysis(request: Request):
