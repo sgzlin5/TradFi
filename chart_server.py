@@ -13,6 +13,7 @@ import math
 import os
 import secrets
 import time
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
@@ -378,34 +379,56 @@ async def api_close_position(position_id: int, request: Request):
 
 # ── 收益汇总（需登录）──────────────
 @app.get("/api/pnl_summary")
-def api_pnl_summary(
-    request:    Request,
-    today_from: int = Query(..., description="今日零点 Unix 时闳戳（秒）"),
-):
+def api_pnl_summary(request: Request):
     creds = _get_creds(request)
     if not creds:
         raise HTTPException(401, detail="未登录")
-    now_ts       = int(time.time())
-    yesterday_ts = today_from - 86400
+    now_ts = int(time.time())
+    today  = date.today()
+
+    # 最近 5 个工作日（周一~周五）
+    working_days: list[date] = []
+    d = today
+    while len(working_days) < 5:
+        if d.weekday() < 5:          # 0=Mon … 4=Fri
+            working_days.append(d)
+        d -= timedelta(days=1)
+
+    oldest_ts = int(datetime(working_days[-1].year,
+                             working_days[-1].month,
+                             working_days[-1].day).timestamp())
+
+    # 本月起始时间戳
+    month_start   = date(today.year, today.month, 1)
+    month_from_ts = int(datetime(month_start.year,
+                                 month_start.month,
+                                 month_start.day).timestamp())
+
+    earliest_ts = min(oldest_ts, month_from_ts)
     try:
-        # 一次请求拉取昇天至现在的全部历史
-        records = get_position_history(*creds, yesterday_ts, now_ts)
+        records = get_position_history(*creds, earliest_ts, now_ts)
     except Exception as e:
         raise HTTPException(502, detail=str(e))
 
-    today_pnl     = 0.0
-    yesterday_pnl = 0.0
+    day_pnl:   dict[str, float] = {}
+    month_pnl: float            = 0.0
+
     for r in records:
         t   = int(r.get("time_close") or 0)
         pnl = float(r.get("realized_pnl") or 0)
-        if t >= today_from:
-            today_pnl += pnl
-        elif t >= yesterday_ts:
-            yesterday_pnl += pnl
+        if t >= month_from_ts:
+            month_pnl += pnl
+        date_str = date.fromtimestamp(t).isoformat()
+        day_pnl[date_str] = day_pnl.get(date_str, 0.0) + pnl
+
+    recent_days = [
+        {"date": wd.isoformat(), "pnl": round(day_pnl.get(wd.isoformat(), 0.0), 2)}
+        for wd in working_days
+    ]
 
     return JSONResponse({
-        "today_pnl":     round(today_pnl,     2),
-        "yesterday_pnl": round(yesterday_pnl, 2),
+        "recent_days": recent_days,
+        "month_pnl":   round(month_pnl, 2),
     })
 
 

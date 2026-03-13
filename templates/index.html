@@ -466,13 +466,22 @@
       <span class="sr-label">持仓总盈亏</span>
       <span class="sr-val" id="total-pnl-val">--</span>
     </div>
+
+    <hr class="sidebar-divider">
+
+    <div class="sidebar-section-title">最近5日收益</div>
+    <div id="recent-days-container"></div>
+
+    <hr class="sidebar-divider">
+
+    <div class="sidebar-section-title">本月</div>
     <div class="sidebar-row">
-      <span class="sr-label">今日已实现</span>
-      <span class="sr-val" id="today-pnl-val">--</span>
+      <span class="sr-label">本月已实现</span>
+      <span class="sr-val" id="month-pnl-val">--</span>
     </div>
     <div class="sidebar-row">
-      <span class="sr-label">昨日已实现</span>
-      <span class="sr-val" id="yesterday-pnl-val">--</span>
+      <span class="sr-label">本月收益率</span>
+      <span class="sr-val" id="month-rate-val">--</span>
     </div>
 
     <hr class="sidebar-divider">
@@ -586,6 +595,7 @@ const INTERVALS = ['1m','5m','15m','30m','1h','4h','1d'];
 const REFRESH_MS = { '1m':5,'5m':5,'15m':5,'30m':5,'1h':5,'4h':5,'1d':5 };
 let _refreshTimer    = null;
 let _silentRefreshing = false;   // 防止并发刷新请求堆积
+let _accountBalance   = null;    // 当前账户余额，用于收益率计算
 let _macdFitted      = false;    // MACD 面板只 fitContent 一次，避免缩放被重置
 let _posTimer        = null;
 let currentSymbol   = 'XAUUSD';
@@ -1069,6 +1079,7 @@ async function loadAssets() {
     const bal = data?.data?.balance ?? data?.balance ?? data?.equity ?? null;
     const cur = data?.data?.currency ?? data?.currency ?? '';
     if (bal != null) {
+      _accountBalance = Number(bal);
       const s = Number(bal).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       document.getElementById('balance-val').textContent = cur ? `${s} ${cur}` : s;
     }
@@ -1099,22 +1110,44 @@ async function loadAssets() {
     }
   } catch(_) {}
 
-  // 今日 / 昨日已实现收益
+  // 最近5工作日 + 本月 已实现收益
   try {
-    const now = new Date();
-    const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const todayFrom = Math.floor(todayMidnight.getTime() / 1000);
-    const res3 = await fetch(`/api/pnl_summary?today_from=${todayFrom}`);
+    const res3 = await fetch('/api/pnl_summary');
     if (res3.status === 401) { window.location.href = '/login'; return; }
     if (res3.ok) {
       const d3 = await res3.json();
-      const _setPnl = (elId, val) => {
-        const el = document.getElementById(elId);
-        el.textContent = (val >= 0 ? '+' : '') + val.toFixed(2);
-        el.style.color = val >= 0 ? '#26a641' : '#f85149';
-      };
-      _setPnl('today-pnl-val',     d3.today_pnl);
-      _setPnl('yesterday-pnl-val', d3.yesterday_pnl);
+      const bal = _accountBalance || 0;
+
+      // 渲染最近5个工作日
+      const container = document.getElementById('recent-days-container');
+      container.innerHTML = '';
+      for (const day of d3.recent_days) {
+        const pnl   = day.pnl;
+        const rate  = bal > 0 ? (pnl / bal * 100) : null;
+        const sign  = pnl >= 0 ? '+' : '';
+        const color = pnl > 0 ? '#26a641' : (pnl < 0 ? '#f85149' : '#8b949e');
+        const label = day.date.slice(5).replace('-', '/');
+        const rateStr = rate != null
+          ? ` (${rate >= 0 ? '+' : ''}${rate.toFixed(2)}%)`
+          : '';
+        const row = document.createElement('div');
+        row.className = 'sidebar-row';
+        row.innerHTML = `<span class="sr-label">${label}</span>`
+          + `<span class="sr-val" style="color:${color};font-size:11px">${sign}${pnl.toFixed(2)}<span style="color:${color};font-size:10px">${rateStr}</span></span>`;
+        container.appendChild(row);
+      }
+
+      // 本月汇总
+      const mp    = d3.month_pnl;
+      const mr    = bal > 0 ? (mp / bal * 100) : null;
+      const mSign = mp >= 0 ? '+' : '';
+      const mClr  = mp > 0 ? '#26a641' : (mp < 0 ? '#f85149' : '#8b949e');
+      const mEl   = document.getElementById('month-pnl-val');
+      mEl.textContent = mSign + mp.toFixed(2);
+      mEl.style.color = mClr;
+      const rEl = document.getElementById('month-rate-val');
+      rEl.textContent = mr != null ? `${mr >= 0 ? '+' : ''}${mr.toFixed(2)}%` : '--';
+      rEl.style.color = mClr;
     }
   } catch(_) {}
 }
