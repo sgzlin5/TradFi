@@ -690,10 +690,7 @@
 // ════════════════════════════════════════════
 const SYMBOLS   = ['XAUUSD', 'NAS100'];
 const INTERVALS = ['1m','5m','15m','30m','1h','4h','1d'];
-// 每个周期对应的自动刷新间隔（毫秒）
-const REFRESH_MS = { '1m':5,'5m':5,'15m':5,'30m':5,'1h':5,'4h':5,'1d':5 };
-let _refreshTimer    = null;
-let _silentRefreshing = false;   // 防止并发刷新请求堆积
+let _klineWS         = null;         // 实时 K 线 WebSocket 连接
 let _accountBalance   = null;    // 当前账户余额，用于收益率计算
 let _macdFitted      = false;    // MACD 面板只 fitContent 一次，避免缩放被重置
 let _posTimer        = null;
@@ -1214,44 +1211,54 @@ async function loadKlines(interval) {
     document.getElementById('symbol-title').textContent =
       `${currentSymbol}  ${interval}  ${last ? last.close.toFixed(2) : ''}`;
     document.getElementById('kline-status').textContent = `${currentCandles.length} 根K线`;
-    startAutoRefresh();
+    connectKlineWS(currentSymbol, interval);
   } catch(e) {
     document.getElementById('kline-status').textContent = '加载失败: ' + e.message;
   }
 }
 
-// 自动刷新定时器
-function startAutoRefresh() {
-  if (_refreshTimer) clearInterval(_refreshTimer);
-  const ms = REFRESH_MS[currentInterval] || 15000;
-  _refreshTimer = setInterval(silentRefresh, ms);
-}
+// ════════════════════════════════════════════
+//  实时 K 线 WebSocket
+// ════════════════════════════════════════════
+function connectKlineWS(symbol, interval) {
+  // 关闭旧连接（切换交易对 / 周期时）
+  if (_klineWS) {
+    _klineWS.onclose = null;   // 防止触发自动重连
+    _klineWS.close(1000, 'switch');
+    _klineWS = null;
+  }
 
-// 无闪烁新数据更新（保持视图不重置）
-async function silentRefresh() {
-  if (_silentRefreshing) return;   // 上一次请求尚未完成，跳过本次
-  _silentRefreshing = true;
-  try {
-    const res = await fetch(`/api/klines?symbol=${currentSymbol}&interval=${currentInterval}&limit=3`);
-    if (res.status === 401) { window.location.href = '/login'; return; }
-    if (!res.ok) return;
-    const { candles } = await res.json();
-    if (!candles.length || !currentCandles.length) return;
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const url   = `${proto}//${location.host}/ws/klines?symbol=${symbol}&interval=${interval}`;
+  const ws    = new WebSocket(url);
+  _klineWS    = ws;
 
+  ws.onopen = () => {
+    document.getElementById('kline-status').textContent =
+      `${currentCandles.length} 根K线 [实时]`;
+  };
+
+  ws.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    if (data.ping) return;   // 服务端心跳
+
+    const c = data;
+    if (!currentCandles.length) return;
+
+    const lastTime = currentCandles.at(-1).time;
     let changed = false;
-    for (const c of candles) {
-      const lastTime = currentCandles.at(-1).time;
-      if (c.time > lastTime) {
-        currentCandles.push(c);
+
+    if (c.time > lastTime) {
+      currentCandles.push(c);
+      candleSeries.update(c);
+      changed = true;
+    } else if (c.time === lastTime) {
+      const last = currentCandles.at(-1);
+      if (last.open !== c.open || last.high !== c.high ||
+          last.low  !== c.low  || last.close !== c.close) {
+        currentCandles[currentCandles.length - 1] = c;
         candleSeries.update(c);
         changed = true;
-      } else if (c.time === lastTime) {
-        const last = currentCandles.at(-1);
-        if (last.open !== c.open || last.high !== c.high || last.low !== c.low || last.close !== c.close) {
-          currentCandles[currentCandles.length - 1] = c;
-          candleSeries.update(c);
-          changed = true;
-        }
       }
     }
 
@@ -1259,11 +1266,20 @@ async function silentRefresh() {
     const last = currentCandles.at(-1);
     if (last) document.getElementById('symbol-title').textContent =
       `${currentSymbol}  ${currentInterval}  ${last.close.toFixed(2)}`;
-    document.getElementById('kline-status').textContent = `${currentCandles.length} 根K线`;
-  } catch(_) {
-  } finally {
-    _silentRefreshing = false;
-  }
+    document.getElementById('kline-status').textContent =
+      `${currentCandles.length} 根K线 [实时]`;
+  };
+
+  ws.onclose = (e) => {
+    // 非主动关闭时自动重连
+    if (ws === _klineWS && e.code !== 1000) {
+      setTimeout(() => connectKlineWS(symbol, interval), 3000);
+    }
+  };
+
+  ws.onerror = () => {
+    // onerror 后必定触发 onclose，由 onclose 处理重连
+  };
 }
 
 // ════════════════════════════════════════════

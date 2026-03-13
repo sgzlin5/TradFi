@@ -4,6 +4,7 @@ TradFi K 线可视化 Web 服务
 运行: python chart_server.py
 访问: http://localhost:23333
 """
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -15,7 +16,9 @@ import secrets
 import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Set, Tuple
+
+import websockets as _ws_lib
 
 import matplotlib
 matplotlib.use('Agg')
@@ -36,12 +39,13 @@ import quantstats as qs
 from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from fastapi import Cookie, FastAPI, HTTPException, Query, Request
+from fastapi import Cookie, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from itsdangerous import BadSignature, SignatureExpired, TimestampSigner
 
 # ── 常量 ──────────────────────────────────────
 HOST            = "https://api.gateio.ws"
+WS_HOST         = "wss://fx-ws.gateio.ws/v4/ws"
 KLINE_INTERVALS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"]
 TEMPLATES_DIR   = Path(__file__).parent / "templates"
 CONFIG_FILE     = Path(__file__).parent / "config.enc"
@@ -197,6 +201,79 @@ def get_position_history(api_key: str, api_secret: str,
                             headers=headers)
     resp.raise_for_status()
     return resp.json().get("data", {}).get("list", [])
+
+
+# ── 实时 K 线 WebSocket 管理器 ────────────────
+class _KlineWSManager:
+    """管理浏览器 WS 订阅与 Gate.io 上游 WS 连接（每个 symbol+interval 维持一条上游连接）"""
+
+    def __init__(self) -> None:
+        self._clients:    Dict[tuple, Set[asyncio.Queue]] = {}
+        self._gate_tasks: Dict[tuple, asyncio.Task]      = {}
+        self._lock = asyncio.Lock()
+
+    async def subscribe(self, key: tuple, queue: asyncio.Queue) -> None:
+        async with self._lock:
+            if key not in self._clients:
+                self._clients[key] = set()
+            self._clients[key].add(queue)
+            if key not in self._gate_tasks or self._gate_tasks[key].done():
+                self._gate_tasks[key] = asyncio.create_task(self._gate_feeder(key))
+
+    async def unsubscribe(self, key: tuple, queue: asyncio.Queue) -> None:
+        async with self._lock:
+            if key in self._clients:
+                self._clients[key].discard(queue)
+                if not self._clients[key]:
+                    task = self._gate_tasks.pop(key, None)
+                    if task:
+                        task.cancel()
+                    del self._clients[key]
+
+    async def _broadcast(self, key: tuple, msg: dict) -> None:
+        for q in list(self._clients.get(key, set())):
+            try:
+                q.put_nowait(msg)
+            except asyncio.QueueFull:
+                pass
+
+    async def _gate_feeder(self, key: tuple) -> None:
+        """持续连接 Gate.io WS，订阅 K 线推送，并广播给所有订阅者"""
+        symbol, interval = key
+        while True:
+            try:
+                async with _ws_lib.connect(
+                    WS_HOST,
+                    additional_headers={"X-Gate-Size-Decimal": "1"},
+                ) as gate_ws:
+                    sub_msg = json.dumps({
+                        "time":    int(time.time()),
+                        "channel": "futures.candlesticks",
+                        "event":   "subscribe",
+                        "payload": [interval, symbol],
+                    })
+                    await gate_ws.send(sub_msg)
+                    async for raw in gate_ws:
+                        data = json.loads(raw)
+                        if (data.get("channel") == "futures.candlesticks"
+                                and data.get("event") == "update"):
+                            for r in data.get("result", []):
+                                candle = {
+                                    "time":  int(r["t"]),
+                                    "open":  float(r["o"]),
+                                    "high":  float(r["h"]),
+                                    "low":   float(r["l"]),
+                                    "close": float(r["c"]),
+                                    "w":     bool(r.get("w", False)),
+                                }
+                                await self._broadcast(key, candle)
+            except asyncio.CancelledError:
+                return
+            except Exception:
+                await asyncio.sleep(5)   # 断线后等待重连
+
+
+_ws_manager = _KlineWSManager()
 
 
 # ── FastAPI ───────────────────────────────────
@@ -658,6 +735,47 @@ def api_trade_analysis(request: Request):
         "avg_consec_loss":       avg_cl,
         "equity_curve_chart":    f"data:image/png;base64,{img_base64}",
     })
+
+
+# ── 实时 K 线 WebSocket 接口（需登录）──────────
+@app.websocket("/ws/klines")
+async def ws_klines(
+    websocket: WebSocket,
+    symbol:    str = Query(default="XAUUSD"),
+    interval:  str = Query(default="1m"),
+):
+    # 验证会话
+    token = websocket.cookies.get("session")
+    if not token:
+        await websocket.close(code=4001)
+        return
+    sid = _verify_token(token)
+    if not sid or sid not in _sessions:
+        await websocket.close(code=4001)
+        return
+    if interval not in KLINE_INTERVALS:
+        await websocket.close(code=4000)
+        return
+
+    await websocket.accept()
+
+    key: tuple          = (symbol, interval)
+    queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+    await _ws_manager.subscribe(key, queue)
+    try:
+        while True:
+            try:
+                candle = await asyncio.wait_for(queue.get(), timeout=25.0)
+                await websocket.send_json(candle)
+            except asyncio.TimeoutError:
+                # 保活心跳
+                await websocket.send_json({"ping": True})
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        await _ws_manager.unsubscribe(key, queue)
 
 
 # ── 启动 ──────────────────────────────────────
