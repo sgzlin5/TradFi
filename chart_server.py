@@ -662,5 +662,5 @@ def api_trade_analysis(request: Request):
 
 # ── 启动 ──────────────────────────────────────
 if __name__ == "__main__":
-    print("K线图地址: http://localhost:23333")
+    print("Local Device: http://localhost:23333")
     uvicorn.run(app, host="0.0.0.0", port=23333)
