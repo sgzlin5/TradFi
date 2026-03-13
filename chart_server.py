@@ -421,6 +421,73 @@ class _OrderBookWSManager:
 _ob_manager = _OrderBookWSManager()
 
 
+# ── 行情 Ticker WebSocket 管理器 ──────────────
+class _TickerWSManager:
+    """每个 symbol 维持一条上游连接，订阅 tradfi.tickers（无需认证）"""
+
+    def __init__(self) -> None:
+        self._clients:    Dict[str, Set[asyncio.Queue]] = {}
+        self._gate_tasks: Dict[str, asyncio.Task]      = {}
+        self._lock = asyncio.Lock()
+
+    async def subscribe(self, symbol: str, queue: asyncio.Queue) -> None:
+        async with self._lock:
+            if symbol not in self._clients:
+                self._clients[symbol] = set()
+            self._clients[symbol].add(queue)
+            if symbol not in self._gate_tasks or self._gate_tasks[symbol].done():
+                self._gate_tasks[symbol] = asyncio.create_task(self._gate_feeder(symbol))
+
+    async def unsubscribe(self, symbol: str, queue: asyncio.Queue) -> None:
+        async with self._lock:
+            if symbol in self._clients:
+                self._clients[symbol].discard(queue)
+                if not self._clients[symbol]:
+                    task = self._gate_tasks.pop(symbol, None)
+                    if task:
+                        task.cancel()
+                    del self._clients[symbol]
+
+    async def _broadcast(self, symbol: str, msg: dict) -> None:
+        for q in list(self._clients.get(symbol, set())):
+            try:
+                q.put_nowait(msg)
+            except asyncio.QueueFull:
+                pass
+
+    async def _gate_feeder(self, symbol: str) -> None:
+        while True:
+            try:
+                async with _ws_lib.connect(WS_HOST) as gate_ws:
+                    await gate_ws.send(json.dumps({
+                        "time":    int(time.time()),
+                        "channel": "tradfi.tickers",
+                        "event":   "subscribe",
+                        "payload": {"markets": [symbol]},
+                    }))
+                    async for raw in gate_ws:
+                        data = json.loads(raw)
+                        if (data.get("channel") == "tradfi.tickers"
+                                and data.get("event") == "update"):
+                            for r in data.get("result", []):
+                                if r.get("symbol") == symbol:
+                                    await self._broadcast(symbol, {
+                                        "last_price":           r.get("last_price", ""),
+                                        "price_change_amount":  r.get("price_change_amount", ""),
+                                        "price_change_rate":    r.get("price_change_rate", ""),
+                                        "high":                 r.get("high", ""),
+                                        "low":                  r.get("low", ""),
+                                        "open_price":           r.get("open_price", ""),
+                                    })
+            except asyncio.CancelledError:
+                return
+            except Exception:
+                await asyncio.sleep(5)
+
+
+_ticker_manager = _TickerWSManager()
+
+
 # ── FastAPI ───────────────────────────────────
 app = FastAPI(title="TradFi K线查看器")
 
@@ -701,13 +768,16 @@ def api_daily_diary(request: Request):
 
 # ── 交易分析（最近30天）──────────────────────
 @app.get("/api/trade_analysis")
-def api_trade_analysis(request: Request):
+def api_trade_analysis(
+    request: Request,
+    days: int = Query(default=30, ge=1, le=365),
+):
     creds = _get_creds(request)
     if not creds:
         raise HTTPException(401, detail="未登录")
 
     now_ts  = int(time.time())
-    from_ts = now_ts - 30 * 86400  # 最近30天
+    from_ts = now_ts - days * 86400
 
     try:
         records = get_position_history(*creds, from_ts, now_ts)
@@ -880,6 +950,40 @@ def api_trade_analysis(request: Request):
         "avg_consec_loss":       avg_cl,
         "equity_curve_chart":    f"data:image/png;base64,{img_base64}",
     })
+
+
+# ── 行情 Ticker WebSocket 接口（需登录）──────────
+@app.websocket("/ws/ticker")
+async def ws_ticker(
+    websocket: WebSocket,
+    symbol: str = Query(default="XAUUSD"),
+):
+    token = websocket.cookies.get("session")
+    if not token:
+        await websocket.close(code=4001)
+        return
+    sid = _verify_token(token)
+    if not sid or sid not in _sessions:
+        await websocket.close(code=4001)
+        return
+
+    await websocket.accept()
+
+    queue: asyncio.Queue = asyncio.Queue(maxsize=50)
+    await _ticker_manager.subscribe(symbol, queue)
+    try:
+        while True:
+            try:
+                msg = await asyncio.wait_for(queue.get(), timeout=25.0)
+                await websocket.send_json(msg)
+            except asyncio.TimeoutError:
+                await websocket.send_json({"ping": True})
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        await _ticker_manager.unsubscribe(symbol, queue)
 
 
 # ── 最优买卖价 WebSocket 接口（需登录）──────────

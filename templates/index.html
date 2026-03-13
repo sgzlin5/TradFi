@@ -88,6 +88,16 @@
   .ob-spread { color: #e6edf3; font-size: 11px; }
   .ob-label-ask { color: #f85149; font-size: 10px; font-weight: 600; letter-spacing: .5px; }
   .ob-label-bid { color: #3fb950; font-size: 10px; font-weight: 600; letter-spacing: .5px; }
+  /* Ticker 行情条 */
+  .ticker-row { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 2px 14px 4px; flex-wrap: wrap; }
+  .ticker-last { font-size: 12px; font-weight: 700; color: #e6edf3; }
+  .ticker-chg  { font-size: 11px; font-weight: 600; }
+  .ticker-chg.pos { color: #3fb950; }
+  .ticker-chg.neg { color: #f85149; }
+  .ticker-chg.neu { color: #8b949e; }
+  .ticker-hl   { font-size: 10px; color: #8b949e; display: flex; gap: 6px; }
+  .ticker-hl .h { color: #f85149; }
+  .ticker-hl .l { color: #3fb950; }
 
   #btn-logout {
     padding: 3px 9px; border: 1px solid #30363d; border-radius: 5px;
@@ -361,6 +371,16 @@
   }
   .an-card .card-label { font-size: 11px; color: #8b949e; margin-bottom: 4px; }
   .an-card .card-val   { font-size: 18px; font-weight: 700; }
+  .an-period-tabs {
+    display: flex; gap: 6px; align-items: center; margin-left: 12px;
+  }
+  .an-period-tab {
+    padding: 2px 10px; border-radius: 20px; font-size: 11px; cursor: pointer;
+    border: 1px solid #30363d; color: #8b949e; background: transparent;
+    transition: all .15s;
+  }
+  .an-period-tab:hover { border-color: #8b949e; color: #e6edf3; }
+  .an-period-tab.active { background: #1f6feb; border-color: #1f6feb; color: #fff; font-weight: 600; }
   #btn-analysis {
     width: calc(100% - 28px); margin: 10px 14px 4px;
     padding: 6px 0; background: #1f6feb; border: none; border-radius: 6px;
@@ -531,6 +551,18 @@
         <span class="ob-bid" id="ob-bid">--</span>
       </div>
     </div>
+    <!-- Ticker 行情 -->
+    <div class="ticker-row">
+      <span class="ticker-last" id="ticker-last">--</span>
+      <span class="ticker-chg neu" id="ticker-chg">--</span>
+    </div>
+    <div class="ticker-row" style="padding-top:0">
+      <div class="ticker-hl">
+        <span>H&nbsp;<span class="h" id="ticker-high">--</span></span>
+        <span>L&nbsp;<span class="l" id="ticker-low">--</span></span>
+        <span style="color:#8b949e">O&nbsp;<span id="ticker-open">--</span></span>
+      </div>
+    </div>
     <div class="sidebar-row">
       <span class="sr-label">MT5 ID</span>
       <span class="sr-val" id="mt5-id">--</span>
@@ -646,7 +678,13 @@
 <div id="analysis-overlay" class="hidden" onclick="_analysisBgClick(event)">
   <div id="analysis-box">
     <div id="analysis-header">
-      <div><h2 style="display:inline">交易分析报告</h2><span class="sub" id="analysis-period">最近30天</span></div>
+      <div style="display:flex;align-items:center">
+        <h2 style="display:inline">交易分析报告</h2>
+        <div class="an-period-tabs">
+          <button class="an-period-tab" data-days="14" onclick="switchAnalysisPeriod(14)">最近2周</button>
+          <button class="an-period-tab active" data-days="30" onclick="switchAnalysisPeriod(30)">最近30天</button>
+        </div>
+      </div>
       <span id="analysis-close" onclick="closeAnalysis()">×</span>
     </div>
     <div id="analysis-body">
@@ -711,6 +749,7 @@ const INTERVALS = ['1m','5m','15m','30m','1h','4h','1d'];
 let _klineWS         = null;         // 实时 K 线 WebSocket 连接
 let _privateWS       = null;         // 私有频道（仓位/余额）WebSocket 连接
 let _obWS            = null;         // 最优买卖价 WebSocket 连接
+let _tickerWS        = null;         // 行情 Ticker WebSocket 连接
 let _accountBalance   = null;    // 当前账户余额，用于收益率计算
 let _macdFitted      = false;    // MACD 面板只 fitContent 一次，避免缩放被重置
 let _posTimer        = null;
@@ -1223,6 +1262,56 @@ function loadKlines(interval) {
 // ════════════════════════════════════════════
 //  最优买卖价 WebSocket
 // ════════════════════════════════════════════
+function connectTickerWS(symbol) {
+  if (_tickerWS) {
+    _tickerWS.onclose = null;
+    _tickerWS.close(1000, 'switch');
+    _tickerWS = null;
+  }
+  // 切换品种时清空
+  document.getElementById('ticker-last').textContent = '--';
+  const chgEl = document.getElementById('ticker-chg');
+  chgEl.textContent = '--';
+  chgEl.className = 'ticker-chg neu';
+  document.getElementById('ticker-high').textContent = '--';
+  document.getElementById('ticker-low').textContent  = '--';
+  document.getElementById('ticker-open').textContent = '--';
+
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws    = new WebSocket(`${proto}//${location.host}/ws/ticker?symbol=${symbol}`);
+  _tickerWS   = ws;
+
+  ws.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    if (data.ping) return;
+    const last   = parseFloat(data.last_price);
+    const chgAmt = parseFloat(data.price_change_amount);
+    const chgPct = parseFloat(data.price_change_rate);
+    const high   = parseFloat(data.high);
+    const low    = parseFloat(data.low);
+    const open   = parseFloat(data.open_price);
+    const digits = symbol.includes('JPY') ? 3 : (last < 100 ? 5 : 2);
+    if (!isNaN(last))   document.getElementById('ticker-last').textContent = last.toFixed(digits);
+    if (!isNaN(chgAmt) && !isNaN(chgPct)) {
+      const sign = chgAmt >= 0 ? '+' : '';
+      const el   = document.getElementById('ticker-chg');
+      el.textContent = `${sign}${chgAmt.toFixed(digits)} (${sign}${chgPct.toFixed(2)}%)`;
+      el.className   = 'ticker-chg ' + (chgAmt > 0 ? 'pos' : chgAmt < 0 ? 'neg' : 'neu');
+    }
+    if (!isNaN(high))  document.getElementById('ticker-high').textContent = high.toFixed(digits);
+    if (!isNaN(low))   document.getElementById('ticker-low').textContent  = low.toFixed(digits);
+    if (!isNaN(open))  document.getElementById('ticker-open').textContent = open.toFixed(digits);
+  };
+
+  ws.onclose = (e) => {
+    if (ws === _tickerWS && e.code !== 1000) {
+      setTimeout(() => connectTickerWS(symbol), 3000);
+    }
+  };
+
+  ws.onerror = () => {};
+}
+
 function connectOrderBookWS(symbol) {
   if (_obWS) {
     _obWS.onclose = null;
@@ -1749,16 +1838,26 @@ async function _saveBatchTPSL() {
 // ════════════════════════════════════════════
 //  数据分析报告
 // ════════════════════════════════════════════
+let _analysisDays = 30;
+
 function openAnalysis() {
   document.getElementById('analysis-overlay').classList.remove('hidden');
   document.getElementById('analysis-body').innerHTML = '<div id="analysis-loading">数据加载中，请稍候…</div>';
-  fetchAnalysis();
+  fetchAnalysis(_analysisDays);
 }
 function closeAnalysis() {
   document.getElementById('analysis-overlay').classList.add('hidden');
 }
 function _analysisBgClick(e) {
   if (e.target === document.getElementById('analysis-overlay')) closeAnalysis();
+}
+function switchAnalysisPeriod(days) {
+  _analysisDays = days;
+  document.querySelectorAll('.an-period-tab').forEach(btn => {
+    btn.classList.toggle('active', parseInt(btn.dataset.days) === days);
+  });
+  document.getElementById('analysis-body').innerHTML = '<div id="analysis-loading">数据加载中，请稍候…</div>';
+  fetchAnalysis(days);
 }
 
 function _signPnl(v, digits = 2) {
@@ -1776,7 +1875,7 @@ function _row(label, valHtml) {
   return `<div class="an-row"><span class="an-label">${label}</span><span class="an-val">${valHtml}</span></div>`;
 }
 
-function renderAnalysis(d) {
+function renderAnalysis(d, days = 30) {
   if (!d.total_trades) {
     document.getElementById('analysis-body').innerHTML =
       '<div style="text-align:center;padding:40px;color:#8b949e">暂无历史交易数据</div>';
@@ -1862,13 +1961,13 @@ function renderAnalysis(d) {
   `;
 }
 
-async function fetchAnalysis() {
+async function fetchAnalysis(days = 30) {
   try {
-    const res = await fetch('/api/trade_analysis');
+    const res = await fetch(`/api/trade_analysis?days=${days}`);
     if (res.status === 401) { window.location.href = '/login'; return; }
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
-    renderAnalysis(data);
+    renderAnalysis(data, days);
   } catch(e) {
     document.getElementById('analysis-body').innerHTML =
       `<div style="text-align:center;padding:40px;color:#f85149">加载失败: ${e.message}</div>`;
@@ -2044,6 +2143,7 @@ SYMBOLS.forEach(sym => {
     btn.classList.add('active');
     loadKlines(currentInterval);
     connectOrderBookWS(sym);
+    connectTickerWS(sym);
   });
   symbolBar.appendChild(btn);
 });
@@ -2073,6 +2173,7 @@ loadAssets();
 loadPositions();
 connectPrivateWS();
 connectOrderBookWS(currentSymbol);
+connectTickerWS(currentSymbol);
 // 资产信息兜底刷新（每 10 秒），主要依赖私有 WS 推送触发
 const _assetsTimer = setInterval(loadAssets, 10000);
 // 仓位兜底刷新（每 2 秒），P&L 更新依赖轮询；私有 WS 推送时立即刷新
