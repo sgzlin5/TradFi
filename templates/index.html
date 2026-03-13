@@ -88,16 +88,24 @@
   .ob-spread { color: #e6edf3; font-size: 11px; }
   .ob-label-ask { color: #f85149; font-size: 10px; font-weight: 600; letter-spacing: .5px; }
   .ob-label-bid { color: #3fb950; font-size: 10px; font-weight: 600; letter-spacing: .5px; }
-  /* Ticker 行情条 */
-  .ticker-row { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 2px 14px 4px; flex-wrap: wrap; }
-  .ticker-last { font-size: 12px; font-weight: 700; color: #e6edf3; }
+  /* Ticker 行情 */
+  .ticker-price-row { display: flex; align-items: baseline; justify-content: center; gap: 6px; padding: 5px 14px 3px; }
+  .ticker-last { font-size: 14px; font-weight: 700; color: #e6edf3; font-variant-numeric: tabular-nums; }
   .ticker-chg  { font-size: 11px; font-weight: 600; }
-  .ticker-chg.pos { color: #3fb950; }
+  .ticker-chg.pos { color: #26a641; }
   .ticker-chg.neg { color: #f85149; }
   .ticker-chg.neu { color: #8b949e; }
-  .ticker-hl   { font-size: 10px; color: #8b949e; display: flex; gap: 6px; }
-  .ticker-hl .h { color: #f85149; }
-  .ticker-hl .l { color: #3fb950; }
+  /* 日内价格范围条 */
+  .ticker-range-wrap { padding: 2px 12px 8px; }
+  .ticker-range-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+  .ticker-range-lo  { font-size: 10px; color: #8b949e; font-variant-numeric: tabular-nums; }
+  .ticker-range-hi  { font-size: 10px; color: #8b949e; font-variant-numeric: tabular-nums; }
+  .ticker-range-lbl { font-size: 10px; color: #8b949e; }
+  .ticker-range-track { position: relative; height: 2px; background: #30363d; border-radius: 2px; margin-bottom: 5px; }
+  .ticker-range-fill  { position: absolute; left: 0; top: 0; height: 100%; border-radius: 2px; transition: width .4s ease; }
+  .ticker-range-thumb { position: absolute; top: 100%; transform: translateX(-50%); margin-top: 1px; width: 0; height: 0;
+    border-left: 4px solid transparent; border-right: 4px solid transparent;
+    border-top: 5px solid #e6edf3; transition: left .4s ease; }
 
   #btn-logout {
     padding: 3px 9px; border: 1px solid #30363d; border-radius: 5px;
@@ -552,15 +560,20 @@
       </div>
     </div>
     <!-- Ticker 行情 -->
-    <div class="ticker-row">
+    <hr class="sidebar-divider" style="margin:3px 0 0">
+    <div class="ticker-price-row">
       <span class="ticker-last" id="ticker-last">--</span>
       <span class="ticker-chg neu" id="ticker-chg">--</span>
     </div>
-    <div class="ticker-row" style="padding-top:0">
-      <div class="ticker-hl">
-        <span>H&nbsp;<span class="h" id="ticker-high">--</span></span>
-        <span>L&nbsp;<span class="l" id="ticker-low">--</span></span>
-        <span style="color:#8b949e">O&nbsp;<span id="ticker-open">--</span></span>
+    <div class="ticker-range-wrap">
+      <div class="ticker-range-header">
+        <span class="ticker-range-lo" id="ticker-low">--</span>
+        <span class="ticker-range-lbl">当日价格范围</span>
+        <span class="ticker-range-hi" id="ticker-high">--</span>
+      </div>
+      <div class="ticker-range-track">
+        <div class="ticker-range-fill" id="ticker-range-fill" style="width:0%"></div>
+        <div class="ticker-range-thumb" id="ticker-range-thumb" style="left:0%"></div>
       </div>
     </div>
     <div class="sidebar-row">
@@ -1275,7 +1288,8 @@ function connectTickerWS(symbol) {
   chgEl.className = 'ticker-chg neu';
   document.getElementById('ticker-high').textContent = '--';
   document.getElementById('ticker-low').textContent  = '--';
-  document.getElementById('ticker-open').textContent = '--';
+  document.getElementById('ticker-range-fill').style.width  = '0%';
+  document.getElementById('ticker-range-thumb').style.left  = '0%';
 
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const ws    = new WebSocket(`${proto}//${location.host}/ws/ticker?symbol=${symbol}`);
@@ -1289,7 +1303,6 @@ function connectTickerWS(symbol) {
     const chgPct = parseFloat(data.price_change_rate);
     const high   = parseFloat(data.high);
     const low    = parseFloat(data.low);
-    const open   = parseFloat(data.open_price);
     const digits = symbol.includes('JPY') ? 3 : (last < 100 ? 5 : 2);
     if (!isNaN(last))   document.getElementById('ticker-last').textContent = last.toFixed(digits);
     if (!isNaN(chgAmt) && !isNaN(chgPct)) {
@@ -1298,9 +1311,19 @@ function connectTickerWS(symbol) {
       el.textContent = `${sign}${chgAmt.toFixed(digits)} (${sign}${chgPct.toFixed(2)}%)`;
       el.className   = 'ticker-chg ' + (chgAmt > 0 ? 'pos' : chgAmt < 0 ? 'neg' : 'neu');
     }
-    if (!isNaN(high))  document.getElementById('ticker-high').textContent = high.toFixed(digits);
-    if (!isNaN(low))   document.getElementById('ticker-low').textContent  = low.toFixed(digits);
-    if (!isNaN(open))  document.getElementById('ticker-open').textContent = open.toFixed(digits);
+    if (!isNaN(high)) document.getElementById('ticker-high').textContent = high.toFixed(digits);
+    if (!isNaN(low))  document.getElementById('ticker-low').textContent  = low.toFixed(digits);
+    // 价格范围条
+    if (!isNaN(high) && !isNaN(low) && high > low && !isNaN(last)) {
+      const pct   = Math.max(0, Math.min(100, (last - low) / (high - low) * 100));
+      const color = chgAmt > 0 ? '#26a641' : chgAmt < 0 ? '#f85149' : '#8b949e';
+      const fill  = document.getElementById('ticker-range-fill');
+      const thumb = document.getElementById('ticker-range-thumb');
+      fill.style.width      = pct.toFixed(1) + '%';
+      fill.style.background = color;
+      thumb.style.left      = pct.toFixed(1) + '%';
+      thumb.style.borderTopColor = color;
+    }
   };
 
   ws.onclose = (e) => {
