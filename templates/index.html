@@ -455,6 +455,7 @@
     <button onclick="openModal('ma')">+ MA</button>
     <button id="btn-bb"   onclick="toggleBB()">BB</button>
     <button id="btn-macd" onclick="toggleMACD()">MACD</button>
+    <button id="btn-div"  onclick="toggleDivergence()" title="MACD能量柱背离标记">背离</button>
     <button onclick="openModal('ma')" style="display:none" id="btn-settings">⚙</button>
   </div>
 
@@ -714,6 +715,9 @@ let macdCfg = {
   fast: 12, slow: 26, sig: 9,
   colorMacd: '#58a6ff', colorSignal: '#f0883e', colorUp: '#26a641', colorDown: '#f85149',
   enabled: false,
+  divergence: false,           // MACD 能量柱背离标记
+  colorBearDiv: '#f85149',     // 顶背离颜色
+  colorBullDiv: '#26a641',     // 底背离颜色
 };
 let macdChart = null, macdLineSeries = null, signalLineSeries = null, histSeries = null;
 
@@ -826,6 +830,64 @@ function toSeries(times, vals) {
   return times.map((t, i) => vals[i] != null ? { time: t, value: vals[i] } : null).filter(Boolean);
 }
 
+// ════════════════════════════════════════════
+//  MACD 能量柱背离检测
+// ════════════════════════════════════════════
+/**
+ * 找出 histogram 数组的局部极值索引
+ * highs: 正值区的局部峰  lows: 负值区的局部谷
+ * lookback: 两侧各需要多少根柱确认（默认5）
+ */
+function findHistPivots(hist, lookback = 5) {
+  const highs = [], lows = [];
+  for (let i = lookback; i < hist.length - lookback; i++) {
+    if (hist[i] == null) continue;
+    if (hist[i] > 0) {
+      let peak = true;
+      for (let j = 1; j <= lookback && peak; j++) {
+        if (hist[i - j] == null || hist[i + j] == null) { peak = false; break; }
+        if (hist[i] <= hist[i - j] || hist[i] <= hist[i + j]) peak = false;
+      }
+      if (peak) highs.push(i);
+    } else if (hist[i] < 0) {
+      let trough = true;
+      for (let j = 1; j <= lookback && trough; j++) {
+        if (hist[i - j] == null || hist[i + j] == null) { trough = false; break; }
+        if (hist[i] >= hist[i - j] || hist[i] >= hist[i + j]) trough = false;
+      }
+      if (trough) lows.push(i);
+    }
+  }
+  return { highs, lows };
+}
+
+/**
+ * 检测 MACD 能量柱背离：
+ * 顶背离 (bear): 价格创新高，但 histogram 正峰值更低 → 上涨动能衰减
+ * 底背离 (bull): 价格创新低，但 histogram 负谷值更高（绝对值更小）→ 下跌动能衰减
+ * 返回 [{ type:'bear'|'bull', idx, idx1 }]
+ */
+function calcMACDDivergence(candles, hist, lookback = 5) {
+  const { highs, lows } = findHistPivots(hist, lookback);
+  const signals = [];
+
+  // 顶背离
+  for (let k = 1; k < highs.length; k++) {
+    const i1 = highs[k - 1], i2 = highs[k];
+    if (hist[i2] < hist[i1] && candles[i2].high > candles[i1].high)
+      signals.push({ type: 'bear', idx: i2, idx1: i1 });
+  }
+
+  // 底背离
+  for (let k = 1; k < lows.length; k++) {
+    const i1 = lows[k - 1], i2 = lows[k];
+    if (hist[i2] > hist[i1] && candles[i2].low < candles[i1].low)
+      signals.push({ type: 'bull', idx: i2, idx1: i1 });
+  }
+
+  return signals;
+}
+
 // 能量减弱时返回 50% 透明度颜色
 function histColor(hist, i) {
   const isUp  = hist[i] >= 0;
@@ -885,6 +947,34 @@ function renderAllIndicators() {
     histSeries.setData(times.map((t, i) => hist[i] != null
       ? { time: t, value: hist[i], color: histColor(hist, i) }
       : null).filter(Boolean));
+
+    // ── 背离标记 ─────────────────────────────────
+    if (macdCfg.divergence) {
+      const divSigs = calcMACDDivergence(currentCandles, hist);
+      // 主图箭头标记（按时间排序，LightweightCharts 要求）
+      const mainMarkers = divSigs.map(s => ({
+        time:     currentCandles[s.idx].time,
+        position: s.type === 'bear' ? 'aboveBar' : 'belowBar',
+        color:    s.type === 'bear' ? macdCfg.colorBearDiv : macdCfg.colorBullDiv,
+        shape:    s.type === 'bear' ? 'arrowDown' : 'arrowUp',
+        text:     s.type === 'bear' ? '顶背离' : '底背离',
+        size:     1,
+      })).sort((a, b) => a.time - b.time);
+      candleSeries.setMarkers(mainMarkers);
+      // MACD 面板圆点标记
+      const macdMarkers = divSigs.map(s => ({
+        time:     currentCandles[s.idx].time,
+        position: s.type === 'bear' ? 'aboveBar' : 'belowBar',
+        color:    s.type === 'bear' ? macdCfg.colorBearDiv : macdCfg.colorBullDiv,
+        shape:    'circle',
+        size:     0,
+      })).sort((a, b) => a.time - b.time);
+      histSeries.setMarkers(macdMarkers);
+    } else {
+      candleSeries.setMarkers([]);
+      histSeries.setMarkers([]);
+    }
+
     // 仅首次创建时 fitContent，后续刷新不重置视图缩放
     if (!_macdFitted) { macdChart.timeScale().fitContent(); _macdFitted = true; }
   } else {
@@ -894,6 +984,7 @@ function renderAllIndicators() {
       destroyMacdChart();
       resize();
     }
+    candleSeries.setMarkers([]);   // 清除背离标记
   }
 }
 
@@ -948,8 +1039,9 @@ function loadConfig() {
       maNextId = saved.maNextId ?? (maList.length ? Math.max(...maList.map(m => m.id)) + 1 : 1);
     }
     syncModalForms();
-    if (bbCfg.enabled)   document.getElementById('btn-bb').classList.add('ind-on');
-    if (macdCfg.enabled) document.getElementById('btn-macd').classList.add('ind-on');
+    if (bbCfg.enabled)      document.getElementById('btn-bb').classList.add('ind-on');
+    if (macdCfg.enabled)    document.getElementById('btn-macd').classList.add('ind-on');
+    if (macdCfg.divergence) document.getElementById('btn-div').classList.add('ind-on');
   } catch(_) {}
 }
 
@@ -1052,6 +1144,23 @@ function applyBBConfig() {
 function toggleMACD() {
   macdCfg.enabled = !macdCfg.enabled;
   document.getElementById('btn-macd').classList.toggle('ind-on', macdCfg.enabled);
+  // MACD 关闭时同步关闭背离
+  if (!macdCfg.enabled && macdCfg.divergence) {
+    macdCfg.divergence = false;
+    document.getElementById('btn-div').classList.remove('ind-on');
+  }
+  renderAllIndicators();
+  saveConfig();
+}
+
+function toggleDivergence() {
+  // 如果 MACD 未开启，先开启它
+  if (!macdCfg.enabled) {
+    macdCfg.enabled = true;
+    document.getElementById('btn-macd').classList.add('ind-on');
+  }
+  macdCfg.divergence = !macdCfg.divergence;
+  document.getElementById('btn-div').classList.toggle('ind-on', macdCfg.divergence);
   renderAllIndicators();
   saveConfig();
 }
