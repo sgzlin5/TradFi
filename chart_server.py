@@ -451,14 +451,27 @@ def api_daily_diary(request: Request):
         t = int(r.get("time_close") or 0)
         if t < from_ts:
             continue
+        # 平仓价：尝试所有常见字段名，取第一个非空的
+        close_price = (
+            r.get("price_close") or
+            r.get("close_price") or
+            r.get("counterparty_price") or
+            r.get("deal_price") or
+            r.get("settle_price") or
+            r.get("exit_price") or
+            r.get("price_exit") or
+            ""
+        )
         trades.append({
             "time_close":   t,
             "symbol":       r.get("symbol", ""),
             "direction":    (r.get("position_dir") or "").lower(),
             "volume":       r.get("volume", ""),
             "price_open":   r.get("price_open", ""),
-            "price_close":  r.get("price_close") or r.get("counterparty_price") or "",
+            "price_close":  close_price,
             "realized_pnl": round(float(r.get("realized_pnl") or 0), 2),
+            # 调试字段：暴露原始 key 列表，方便排查字段名
+            "_raw_keys":    list(r.keys()),
         })
     trades.sort(key=lambda x: x["time_close"])
     return JSONResponse({"date": today.isoformat(), "trades": trades})

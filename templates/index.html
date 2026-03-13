@@ -1716,6 +1716,10 @@ function renderDiary({ date: dt, trades }) {
     const openP   = parseFloat(t.price_open  || 0);
     const closeP  = parseFloat(t.price_close || 0);
     const digits  = (t.symbol || '').includes('JPY') ? 3 : 5;
+    // 平仓价显示：若仍为空则展示原始字段名供调试
+    const closePDisplay = closeP
+      ? closeP.toFixed(digits)
+      : `<span style="color:#e3b341;font-size:10px">未知 (keys: ${(t._raw_keys || []).join(', ')})</span>`;
     const entry = document.createElement('div');
     entry.className = 'diary-entry';
     entry.innerHTML = `
@@ -1737,7 +1741,7 @@ function renderDiary({ date: dt, trades }) {
           </div>
           <div class="diary-field">
             <span class="df-label">平仓价</span>
-            <span class="df-val">${closeP ? closeP.toFixed(digits) : '--'}</span>
+            <span class="df-val">${closePDisplay}</span>
           </div>
           <div class="diary-field">
             <span class="df-label">已实现盈亏</span>
