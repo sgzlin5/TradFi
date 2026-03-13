@@ -114,6 +114,19 @@
   }
   #btn-logout:hover { border-color: #f85149; color: #f85149; }
   #charts-wrap { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
+  /* 图表信息栏 */
+  #chart-info-bar {
+    display: flex; align-items: center; gap: 16px;
+    padding: 4px 12px; background: #0d1117;
+    border-bottom: 1px solid #21262d; flex-shrink: 0;
+    font-size: 11px; font-variant-numeric: tabular-nums; flex-wrap: wrap;
+  }
+  .cib-item { display: flex; align-items: center; gap: 4px; }
+  .cib-label { color: #8b949e; }
+  .cib-val   { color: #e6edf3; font-weight: 600; }
+  .cib-chg.pos { color: #26a641; font-weight: 700; }
+  .cib-chg.neg { color: #f85149; font-weight: 700; }
+  .cib-chg.neu { color: #8b949e; font-weight: 700; }
   #main-chart-wrap { flex: 1; min-height: 0; }
   #macd-panel { height: 160px; flex-shrink: 0; border-top: 1px solid #30363d; }
 
@@ -502,6 +515,14 @@
 <div id="content-area">
 
 <div id="charts-wrap">
+  <!-- 图表信息栏 -->
+  <div id="chart-info-bar">
+    <div class="cib-item"><span class="cib-label">O</span><span class="cib-val" id="cib-open">--</span></div>
+    <div class="cib-item"><span class="cib-label">H</span><span class="cib-val" id="cib-high" style="color:#f85149">--</span></div>
+    <div class="cib-item"><span class="cib-label">L</span><span class="cib-val" id="cib-low" style="color:#26a641">--</span></div>
+    <div class="cib-item"><span class="cib-label">昨收</span><span class="cib-val" id="cib-prev-close">--</span></div>
+    <div class="cib-item"><span class="cib-chg neu" id="cib-change">--</span></div>
+  </div>
   <div id="main-chart-wrap"></div>
   <div id="macd-panel" class="hidden"></div>
 </div>
@@ -763,6 +784,8 @@ let _klineWS         = null;         // 实时 K 线 WebSocket 连接
 let _privateWS       = null;         // 私有频道（仓位/余额）WebSocket 连接
 let _obWS            = null;         // 最优买卖价 WebSocket 连接
 let _tickerWS        = null;         // 行情 Ticker WebSocket 连接
+let _prevDayClose    = null;         // 昨日收盘价（由 1d K线获取）
+let _tickerDigits    = 2;            // 当前品种小数位数缓存（供 cib 复用）
 let _accountBalance   = null;    // 当前账户余额，用于收益率计算
 let _macdFitted      = false;    // MACD 面板只 fitContent 一次，避免缩放被重置
 let _posTimer        = null;
@@ -1281,6 +1304,7 @@ function connectTickerWS(symbol) {
     _tickerWS.close(1000, 'switch');
     _tickerWS = null;
   }
+  _prevDayClose = null;   // 重置昨日收盘
   // 切换品种时清空
   document.getElementById('ticker-last').textContent = '--';
   const chgEl = document.getElementById('ticker-chg');
@@ -1290,6 +1314,33 @@ function connectTickerWS(symbol) {
   document.getElementById('ticker-low').textContent  = '--';
   document.getElementById('ticker-range-fill').style.width  = '0%';
   document.getElementById('ticker-range-thumb').style.left  = '0%';
+  // 清空图表信息栏
+  ['cib-open','cib-high','cib-low','cib-prev-close'].forEach(id => {
+    document.getElementById(id).textContent = '--';
+  });
+  const cibChg = document.getElementById('cib-change');
+  cibChg.textContent = '--'; cibChg.className = 'cib-chg neu';
+
+  // 异步获取昨日收盘价（取最近 2 根日线，第一根的 close 即昨收）
+  fetch(`/api/klines?symbol=${symbol}&interval=1d&limit=3`)
+    .then(r => r.ok ? r.json() : null)
+    .then(data => {
+      if (!data) return;
+      const candles = data.candles;
+      // 找到最近一根已完成的日线（时间 < 今天0点）
+      const todayMidnight = new Date(); todayMidnight.setHours(0,0,0,0);
+      const todayTs = todayMidnight.getTime() / 1000;
+      const prev = [...candles].reverse().find(c => c.time < todayTs);
+      if (prev) {
+        _prevDayClose = prev.close;
+        const d = _tickerDigits;
+        document.getElementById('cib-prev-close').textContent = prev.close.toFixed(d);
+        // 如果已有最新价，更新涨跌幅
+        const lastTxt = document.getElementById('ticker-last').textContent;
+        if (lastTxt !== '--') _updateCibChange(parseFloat(lastTxt), prev.close, d);
+      }
+    })
+    .catch(() => {});
 
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const ws    = new WebSocket(`${proto}//${location.host}/ws/ticker?symbol=${symbol}`);
@@ -1304,6 +1355,7 @@ function connectTickerWS(symbol) {
     const high   = parseFloat(data.high);
     const low    = parseFloat(data.low);
     const digits = symbol.includes('JPY') ? 3 : (last < 100 ? 5 : 2);
+    _tickerDigits = digits;
     if (!isNaN(last))   document.getElementById('ticker-last').textContent = last.toFixed(digits);
     if (!isNaN(chgAmt) && !isNaN(chgPct)) {
       const sign = chgAmt >= 0 ? '+' : '';
@@ -1313,8 +1365,19 @@ function connectTickerWS(symbol) {
     }
     if (!isNaN(high)) document.getElementById('ticker-high').textContent = high.toFixed(digits);
     if (!isNaN(low))  document.getElementById('ticker-low').textContent  = low.toFixed(digits);
-    // 价格范围条（填充区间 = 开盘价 → 最新价）
+    // 图表信息栏更新
     const open = parseFloat(data.open_price);
+    if (!isNaN(open))  document.getElementById('cib-open').textContent  = open.toFixed(digits);
+    if (!isNaN(high))  document.getElementById('cib-high').textContent  = high.toFixed(digits);
+    if (!isNaN(low))   document.getElementById('cib-low').textContent   = low.toFixed(digits);
+    if (_prevDayClose != null) {
+      document.getElementById('cib-prev-close').textContent = _prevDayClose.toFixed(digits);
+      if (!isNaN(last)) _updateCibChange(last, _prevDayClose, digits);
+    } else if (!isNaN(last) && !isNaN(chgAmt)) {
+      // 昨收未加载时，用 open 作为涨跌基准
+      _updateCibChange(last, open, digits);
+    }
+    // 价格范围条（填充区间 = 开盘价 → 最新价）
     if (!isNaN(high) && !isNaN(low) && high > low && !isNaN(last) && !isNaN(open)) {
       const range    = high - low;
       const lastPct  = Math.max(0, Math.min(100, (last - low) / range * 100));
@@ -1339,6 +1402,17 @@ function connectTickerWS(symbol) {
   };
 
   ws.onerror = () => {};
+}
+
+// 更新图表信息栏涨跌幅
+function _updateCibChange(last, base, digits) {
+  if (!base || base === 0) return;
+  const diff = last - base;
+  const pct  = diff / base * 100;
+  const sign = diff >= 0 ? '+' : '';
+  const el   = document.getElementById('cib-change');
+  el.textContent = `${sign}${diff.toFixed(digits)} (${sign}${pct.toFixed(2)}%)`;
+  el.className   = 'cib-chg ' + (diff > 0 ? 'pos' : diff < 0 ? 'neg' : 'neu');
 }
 
 function connectOrderBookWS(symbol) {
