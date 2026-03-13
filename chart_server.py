@@ -861,7 +861,6 @@ async def ws_klines(
     symbol:    str = Query(default="XAUUSD"),
     interval:  str = Query(default="1m"),
 ):
-    # 验证会话
     token = websocket.cookies.get("session")
     if not token:
         await websocket.close(code=4001)
@@ -876,16 +875,38 @@ async def ws_klines(
 
     await websocket.accept()
 
-    key: tuple          = (symbol, interval)
+    creds      = _sessions[sid]
+    api_key    = creds["api_key"]
+    api_secret = creds["api_secret"]
+
+    # 先百发送历史 K 线（同步 requests 放入线程池，避免阻塞事件循环）
+    try:
+        loop = asyncio.get_event_loop()
+        raw  = await loop.run_in_executor(
+            None, lambda: get_klines(api_key, api_secret, symbol, interval, 300)
+        )
+        bars    = raw.get("data", {}).get("list", [])
+        candles = sorted(
+            [{"time": int(b["t"]), "open": float(b["o"]),
+              "high": float(b["h"]), "low": float(b["l"]), "close": float(b["c"])}
+             for b in bars],
+            key=lambda x: x["time"],
+        )
+        await websocket.send_json({"type": "history", "candles": candles})
+    except Exception as e:
+        await websocket.send_json({"type": "error", "message": str(e)})
+        return
+
+    # 订阅实时 K 线推送
+    key: tuple           = (symbol, interval)
     queue: asyncio.Queue = asyncio.Queue(maxsize=100)
     await _ws_manager.subscribe(key, queue)
     try:
         while True:
             try:
                 candle = await asyncio.wait_for(queue.get(), timeout=25.0)
-                await websocket.send_json(candle)
+                await websocket.send_json({"type": "update", "candle": candle})
             except asyncio.TimeoutError:
-                # 保活心跳
                 await websocket.send_json({"ping": True})
     except WebSocketDisconnect:
         pass

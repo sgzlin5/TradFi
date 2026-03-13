@@ -1196,26 +1196,9 @@ function switchTab(name) {
 // ════════════════════════════════════════════
 //  加载 K 线
 // ════════════════════════════════════════════
-async function loadKlines(interval) {
-  document.getElementById('kline-status').textContent = '加载中…';
-  try {
-    const res  = await fetch(`/api/klines?symbol=${currentSymbol}&interval=${interval}&limit=300`);
-    if (res.status === 401) { window.location.href = '/login'; return; }
-    if (!res.ok) throw new Error(await res.text());
-    const data = await res.json();
-    currentCandles = data.candles;
-    candleSeries.setData(currentCandles);
-    _macdFitted = false;   // 新数据加载，允许 MACD 重新 fitContent 一次
-    renderAllIndicators();
-    mainChart.timeScale().fitContent();
-    const last = currentCandles.at(-1);
-    document.getElementById('symbol-title').textContent =
-      `${currentSymbol}  ${interval}  ${last ? last.close.toFixed(2) : ''}`;
-    document.getElementById('kline-status').textContent = `${currentCandles.length} 根K线`;
-    connectKlineWS(currentSymbol, interval);
-  } catch(e) {
-    document.getElementById('kline-status').textContent = '加载失败: ' + e.message;
-  }
+function loadKlines(interval) {
+  document.getElementById('kline-status').textContent = '连接中…';
+  connectKlineWS(currentSymbol, interval);
 }
 
 // ════════════════════════════════════════════
@@ -1265,40 +1248,53 @@ function connectKlineWS(symbol, interval) {
   _klineWS    = ws;
 
   ws.onopen = () => {
-    document.getElementById('kline-status').textContent =
-      `${currentCandles.length} 根K线 [实时]`;
+    document.getElementById('kline-status').textContent = '加载中…';
   };
 
   ws.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-    if (data.ping) return;   // 服务端心跳
+    const msg = JSON.parse(event.data);
+    if (msg.ping) return;
 
-    const c = data;
-    if (!currentCandles.length) return;
-
-    const lastTime = currentCandles.at(-1).time;
-    let changed = false;
-
-    if (c.time > lastTime) {
-      currentCandles.push(c);
-      candleSeries.update(c);
-      changed = true;
-    } else if (c.time === lastTime) {
+    if (msg.type === 'history') {
+      currentCandles = msg.candles;
+      candleSeries.setData(currentCandles);
+      _macdFitted = false;
+      renderAllIndicators();
+      mainChart.timeScale().fitContent();
       const last = currentCandles.at(-1);
-      if (last.open !== c.open || last.high !== c.high ||
-          last.low  !== c.low  || last.close !== c.close) {
-        currentCandles[currentCandles.length - 1] = c;
+      document.getElementById('symbol-title').textContent =
+        `${symbol}  ${interval}  ${last ? last.close.toFixed(2) : ''}`;
+      document.getElementById('kline-status').textContent =
+        `${currentCandles.length} 根K线 [实时]`;
+
+    } else if (msg.type === 'update') {
+      const c = msg.candle;
+      if (!currentCandles.length) return;
+      const lastTime = currentCandles.at(-1).time;
+      let changed = false;
+      if (c.time > lastTime) {
+        currentCandles.push(c);
         candleSeries.update(c);
         changed = true;
+      } else if (c.time === lastTime) {
+        const last = currentCandles.at(-1);
+        if (last.open !== c.open || last.high !== c.high ||
+            last.low  !== c.low  || last.close !== c.close) {
+          currentCandles[currentCandles.length - 1] = c;
+          candleSeries.update(c);
+          changed = true;
+        }
       }
-    }
+      if (changed) renderAllIndicators();
+      const last = currentCandles.at(-1);
+      if (last) document.getElementById('symbol-title').textContent =
+        `${symbol}  ${interval}  ${last.close.toFixed(2)}`;
+      document.getElementById('kline-status').textContent =
+        `${currentCandles.length} 根K线 [实时]`;
 
-    if (changed) renderAllIndicators();
-    const last = currentCandles.at(-1);
-    if (last) document.getElementById('symbol-title').textContent =
-      `${currentSymbol}  ${currentInterval}  ${last.close.toFixed(2)}`;
-    document.getElementById('kline-status').textContent =
-      `${currentCandles.length} 根K线 [实时]`;
+    } else if (msg.type === 'error') {
+      document.getElementById('kline-status').textContent = '加载失败: ' + msg.message;
+    }
   };
 
   ws.onclose = (e) => {
