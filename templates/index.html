@@ -81,6 +81,11 @@
   .sidebar-row .sr-val   { color: #e6edf3; font-weight: 600; white-space: nowrap; }
   .sidebar-divider { border: none; border-top: 1px solid #30363d; margin: 8px 0; }
   #kline-status { font-size: 12px; color: #8b949e; white-space: nowrap; }
+  /* 买卖报价 */
+  .ob-row { display: flex; align-items: baseline; justify-content: center; gap: 6px; padding: 6px 14px 2px; }
+  .ob-ask  { color: #f85149; font-size: 15px; font-weight: 700; letter-spacing: .3px; }
+  .ob-bid  { color: #3fb950; font-size: 15px; font-weight: 700; letter-spacing: .3px; }
+  .ob-spread { color: #e6edf3; font-size: 11px; }
 
   #btn-logout {
     padding: 3px 9px; border: 1px solid #30363d; border-radius: 5px;
@@ -513,6 +518,12 @@
   <div id="sidebar-inner">
 
     <div class="sidebar-section-title">账户</div>
+    <!-- 最优买卖报价 -->
+    <div class="ob-row">
+      <span class="ob-ask" id="ob-ask">--</span>
+      <span class="ob-spread" id="ob-spread">--</span>
+      <span class="ob-bid" id="ob-bid">--</span>
+    </div>
     <div class="sidebar-row">
       <span class="sr-label">MT5 ID</span>
       <span class="sr-val" id="mt5-id">--</span>
@@ -692,6 +703,7 @@ const SYMBOLS   = ['XAUUSD', 'NAS100'];
 const INTERVALS = ['1m','5m','15m','30m','1h','4h','1d'];
 let _klineWS         = null;         // 实时 K 线 WebSocket 连接
 let _privateWS       = null;         // 私有频道（仓位/余额）WebSocket 连接
+let _obWS            = null;         // 最优买卖价 WebSocket 连接
 let _accountBalance   = null;    // 当前账户余额，用于收益率计算
 let _macdFitted      = false;    // MACD 面板只 fitContent 一次，避免缩放被重置
 let _posTimer        = null;
@@ -1199,6 +1211,47 @@ function switchTab(name) {
 function loadKlines(interval) {
   document.getElementById('kline-status').textContent = '连接中…';
   connectKlineWS(currentSymbol, interval);
+}
+
+// ════════════════════════════════════════════
+//  最优买卖价 WebSocket
+// ════════════════════════════════════════════
+function connectOrderBookWS(symbol) {
+  if (_obWS) {
+    _obWS.onclose = null;
+    _obWS.close(1000, 'switch');
+    _obWS = null;
+  }
+  // 切换品种时清空显示
+  document.getElementById('ob-ask').textContent    = '--';
+  document.getElementById('ob-bid').textContent    = '--';
+  document.getElementById('ob-spread').textContent = '--';
+
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws    = new WebSocket(`${proto}//${location.host}/ws/orderbook?symbol=${symbol}`);
+  _obWS       = ws;
+
+  ws.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    if (data.ping) return;
+    const ask    = parseFloat(data.ask);
+    const bid    = parseFloat(data.bid);
+    if (isNaN(ask) || isNaN(bid)) return;
+    // 自动判断小数位数（JPY对 3 位，其他 5 位）
+    const digits = symbol.includes('JPY') ? 3 : (ask < 100 ? 5 : 2);
+    const spread = ((ask - bid) * Math.pow(10, digits)).toFixed(1);
+    document.getElementById('ob-ask').textContent    = ask.toFixed(digits);
+    document.getElementById('ob-bid').textContent    = bid.toFixed(digits);
+    document.getElementById('ob-spread').textContent = spread;
+  };
+
+  ws.onclose = (e) => {
+    if (ws === _obWS && e.code !== 1000) {
+      setTimeout(() => connectOrderBookWS(symbol), 3000);
+    }
+  };
+
+  ws.onerror = () => {};
 }
 
 // ════════════════════════════════════════════
@@ -1983,6 +2036,7 @@ SYMBOLS.forEach(sym => {
     symbolBar.querySelectorAll('button').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     loadKlines(currentInterval);
+    connectOrderBookWS(sym);
   });
   symbolBar.appendChild(btn);
 });
@@ -2011,6 +2065,7 @@ loadKlines(currentInterval);
 loadAssets();
 loadPositions();
 connectPrivateWS();
+connectOrderBookWS(currentSymbol);
 // 资产信息兜底刷新（每 10 秒），主要依赖私有 WS 推送触发
 const _assetsTimer = setInterval(loadAssets, 10000);
 // 仓位兜底刷新（每 2 秒），P&L 更新依赖轮询；私有 WS 推送时立即刷新

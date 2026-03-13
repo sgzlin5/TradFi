@@ -359,6 +359,68 @@ class _PrivateWSManager:
 _private_ws_manager = _PrivateWSManager()
 
 
+# ── 最优买卖价 WebSocket 管理器 ────────────────
+class _OrderBookWSManager:
+    """每个 symbol 维持一条上游连接，订阅 tradfi.order_book（无需认证）"""
+
+    def __init__(self) -> None:
+        self._clients:    Dict[str, Set[asyncio.Queue]] = {}  # symbol -> set of queues
+        self._gate_tasks: Dict[str, asyncio.Task]      = {}
+        self._lock = asyncio.Lock()
+
+    async def subscribe(self, symbol: str, queue: asyncio.Queue) -> None:
+        async with self._lock:
+            if symbol not in self._clients:
+                self._clients[symbol] = set()
+            self._clients[symbol].add(queue)
+            if symbol not in self._gate_tasks or self._gate_tasks[symbol].done():
+                self._gate_tasks[symbol] = asyncio.create_task(self._gate_feeder(symbol))
+
+    async def unsubscribe(self, symbol: str, queue: asyncio.Queue) -> None:
+        async with self._lock:
+            if symbol in self._clients:
+                self._clients[symbol].discard(queue)
+                if not self._clients[symbol]:
+                    task = self._gate_tasks.pop(symbol, None)
+                    if task:
+                        task.cancel()
+                    del self._clients[symbol]
+
+    async def _broadcast(self, symbol: str, msg: dict) -> None:
+        for q in list(self._clients.get(symbol, set())):
+            try:
+                q.put_nowait(msg)
+            except asyncio.QueueFull:
+                pass
+
+    async def _gate_feeder(self, symbol: str) -> None:
+        while True:
+            try:
+                async with _ws_lib.connect(WS_HOST) as gate_ws:
+                    await gate_ws.send(json.dumps({
+                        "time":    int(time.time()),
+                        "channel": "tradfi.order_book",
+                        "event":   "subscribe",
+                        "payload": [symbol],
+                    }))
+                    async for raw in gate_ws:
+                        data = json.loads(raw)
+                        if (data.get("channel") == "tradfi.order_book"
+                                and data.get("event") == "update"):
+                            for r in data.get("result", []):
+                                await self._broadcast(symbol, {
+                                    "bid": r.get("bid", ""),
+                                    "ask": r.get("ask", ""),
+                                })
+            except asyncio.CancelledError:
+                return
+            except Exception:
+                await asyncio.sleep(5)
+
+
+_ob_manager = _OrderBookWSManager()
+
+
 # ── FastAPI ───────────────────────────────────
 app = FastAPI(title="TradFi K线查看器")
 
@@ -818,6 +880,40 @@ def api_trade_analysis(request: Request):
         "avg_consec_loss":       avg_cl,
         "equity_curve_chart":    f"data:image/png;base64,{img_base64}",
     })
+
+
+# ── 最优买卖价 WebSocket 接口（需登录）──────────
+@app.websocket("/ws/orderbook")
+async def ws_orderbook(
+    websocket: WebSocket,
+    symbol: str = Query(default="XAUUSD"),
+):
+    token = websocket.cookies.get("session")
+    if not token:
+        await websocket.close(code=4001)
+        return
+    sid = _verify_token(token)
+    if not sid or sid not in _sessions:
+        await websocket.close(code=4001)
+        return
+
+    await websocket.accept()
+
+    queue: asyncio.Queue = asyncio.Queue(maxsize=50)
+    await _ob_manager.subscribe(symbol, queue)
+    try:
+        while True:
+            try:
+                msg = await asyncio.wait_for(queue.get(), timeout=25.0)
+                await websocket.send_json(msg)
+            except asyncio.TimeoutError:
+                await websocket.send_json({"ping": True})
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        await _ob_manager.unsubscribe(symbol, queue)
 
 
 # ── 私有频道 WebSocket 接口（仓位 + 余额，需登录）────
