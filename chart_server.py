@@ -789,12 +789,17 @@ def api_trade_analysis(
 
     trades = []
     for r in records:
+        t = int(r.get("time_close") or 0)
+        if t < from_ts:          # 过滤超出时间范围的记录
+            continue
         pnl       = float(r.get("realized_pnl") or 0)
         direction = (r.get("position_dir") or "").lower()
         trades.append({"pnl": pnl, "dir": direction})
 
     pnls         = [t["pnl"] for t in trades]
     total_trades = len(pnls)
+    if not total_trades:
+        return JSONResponse({"total_trades": 0})
     # pd.Series 作为基础数据结构，传入 quantstats 时均用 prepare_returns=False
     # 避免库将原始 P&L 当作百分比收益做预处理
     returns      = pd.Series(pnls, dtype=float)
