@@ -1391,7 +1391,7 @@ async function loadAssets() {
     if (bal != null) {
       _accountBalance = Number(bal);
       const s = Number(bal).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      document.getElementById('balance-val').textContent = cur ? `${s} ${cur}` : s;
+      document.getElementById('balance-val').textContent = cur ? `$${s} ${cur}` : `$${s}`;
     }
   } catch(_) {}
 
@@ -1434,7 +1434,7 @@ async function loadAssets() {
       for (const day of d3.recent_days) {
         const pnl   = day.pnl;
         const rate  = bal > 0 ? (pnl / bal * 100) : null;
-        const sign  = pnl >= 0 ? '+' : '';
+        const sign  = pnl > 0 ? '+' : (pnl < 0 ? '-' : '');
         const color = pnl > 0 ? '#26a641' : (pnl < 0 ? '#f85149' : '#8b949e');
         const label = day.date.slice(5).replace('-', '/');
         const rateStr = rate != null
@@ -1443,17 +1443,17 @@ async function loadAssets() {
         const row = document.createElement('div');
         row.className = 'sidebar-row';
         row.innerHTML = `<span class="sr-label">${label}</span>`
-          + `<span class="sr-val" style="color:${color};font-size:11px">${sign}${pnl.toFixed(2)}<span style="color:${color};font-size:10px">${rateStr}</span></span>`;
+          + `<span class="sr-val" style="color:${color};font-size:11px">${sign}$${Math.abs(pnl).toFixed(2)}<span style="color:${color};font-size:10px">${rateStr}</span></span>`;
         container.appendChild(row);
       }
 
       // 本月汇总
       const mp    = d3.month_pnl;
       const mr    = bal > 0 ? (mp / bal * 100) : null;
-      const mSign = mp >= 0 ? '+' : '';
+      const mSign = mp > 0 ? '+' : (mp < 0 ? '-' : '');
       const mClr  = mp > 0 ? '#26a641' : (mp < 0 ? '#f85149' : '#8b949e');
       const mEl   = document.getElementById('month-pnl-val');
-      mEl.textContent = mSign + mp.toFixed(2);
+      mEl.textContent = mSign + '$' + Math.abs(mp).toFixed(2);
       mEl.style.color = mClr;
       const rEl = document.getElementById('month-rate-val');
       rEl.textContent = mr != null ? `${mr >= 0 ? '+' : ''}${mr.toFixed(2)}%` : '--';
