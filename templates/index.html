@@ -690,13 +690,19 @@
 // ════════════════════════════════════════════
 const SYMBOLS   = ['XAUUSD', 'NAS100'];
 const INTERVALS = ['1m','5m','15m','30m','1h','4h','1d'];
-// 每个周期对应的自动刷新间隔（毫秒）
+// 每个周期对应的自链最短间隔（毫秒）——实际刷新率由 API 往返延迟决定
 const REFRESH_MS = { '1m':5,'5m':5,'15m':5,'30m':5,'1h':5,'4h':5,'1d':5 };
-let _refreshTimer    = null;
+let _refreshTimer     = null;
+let _refreshChainId   = 0;       // 自链 ID，切换品种/周期时混除旧链
 let _silentRefreshing = false;   // 防止并发刷新请求堆积
 let _accountBalance   = null;    // 当前账户余额，用于收益率计算
-let _macdFitted      = false;    // MACD 面板只 fitContent 一次，避免缩放被重置
-let _posTimer        = null;
+let _assetsRefreshing = false;   // 防止资产请求堆积
+let _posRefreshing    = false;   // 防止头寸请求堆积
+let _prevPosJSON      = '';      // 头寸数据哈希，数据未变时跳过 DOM 重建
+let _macdFitted       = false;   // MACD 面板只 fitContent 一次，避免缩放被重置
+let _posTimer         = null;
+let _pnlTimer         = null;
+let currentSymbol   = 'XAUUSD';
 let currentSymbol   = 'XAUUSD';
 let currentInterval = '1m';
 let currentCandles  = [];
@@ -1220,11 +1226,20 @@ async function loadKlines(interval) {
   }
 }
 
-// 自动刷新定时器
+// 自链刷新：请求完成后立即安排下一次，消除定时器无效回调
 function startAutoRefresh() {
-  if (_refreshTimer) clearInterval(_refreshTimer);
-  const ms = REFRESH_MS[currentInterval] || 15000;
-  _refreshTimer = setInterval(silentRefresh, ms);
+  _refreshChainId++;                              // 指定一个新链，旧链自动失效
+  const chainId = _refreshChainId;
+  const ms = REFRESH_MS[currentInterval] || 5000;
+  if (_refreshTimer) clearTimeout(_refreshTimer);
+  function _loop() {
+    _refreshTimer = setTimeout(async () => {
+      if (chainId !== _refreshChainId) return;   // 已被更新的链，退出
+      await silentRefresh();
+      if (chainId === _refreshChainId) _loop();  // 继续下一轮
+    }, ms);
+  }
+  _loop();
 }
 
 // 无闪烁新数据更新（保持视图不重置）
@@ -1277,85 +1292,97 @@ function _fmtNum(v, digits = 2) {
 //  资产信息
 // ════════════════════════════════════════════
 async function loadAssets() {
-  // 资产信息（余额）
+  if (_assetsRefreshing) return;   // 防并发
+  _assetsRefreshing = true;
   try {
-    const res = await fetch('/api/assets');
-    if (res.status === 401) { window.location.href = '/login'; return; }
-    if (!res.ok) return;
-    const data = await res.json();
-    const bal = data?.data?.balance ?? data?.balance ?? data?.equity ?? null;
-    const cur = data?.data?.currency ?? data?.currency ?? '';
-    if (bal != null) {
-      _accountBalance = Number(bal);
-      const s = Number(bal).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      document.getElementById('balance-val').textContent = cur ? `${s} ${cur}` : s;
+    // 并行拉取资产信息 + MT5 账户信息，比串行快一倍
+    const [r1, r2] = await Promise.all([
+      fetch('/api/assets').catch(() => null),
+      fetch('/api/mt5account').catch(() => null),
+    ]);
+    if ((r1 && r1.status === 401) || (r2 && r2.status === 401)) {
+      window.location.href = '/login'; return;
     }
-  } catch(_) {}
 
-  // MT5 账户信息（MT5 ID + 强平比例 + 保证金）
-  try {
-    const res2 = await fetch('/api/mt5account');
-    if (res2.status === 401) { window.location.href = '/login'; return; }
-    if (!res2.ok) return;
-    const d2 = await res2.json();
-    const mt5data = d2?.data ?? d2;
-
-    const mt5id = mt5data?.login ?? mt5data?.mt5_id ?? mt5data?.id ?? null;
-    const sol   = mt5data?.stop_out_level ?? mt5data?.stopOutLevel ?? null;
-    const mlv   = mt5data?.margin_level   ?? mt5data?.marginLevel  ?? null;
-    const mfr   = mt5data?.margin_free    ?? mt5data?.marginFree   ?? null;
-    const upnl  = mt5data?.unrealized_pnl ?? mt5data?.unrealizedPnl ?? mt5data?.floating_pl ?? null;
-
-    if (mt5id != null) document.getElementById('mt5-id').textContent = mt5id;
-    if (sol   != null) document.getElementById('stop-out-val').textContent = `${sol}%`;
-    if (mlv   != null) document.getElementById('margin-level-val').textContent = `${_fmtNum(mlv)}%`;
-    if (mfr   != null) document.getElementById('margin-free-val').textContent = _fmtNum(mfr);
-    if (upnl  != null) {
-      const el = document.getElementById('upnl-val');
-      el.textContent = (upnl >= 0 ? '+' : '') + _fmtNum(upnl);
-      el.style.color = upnl >= 0 ? '#56d364' : '#f85149';
+    // 财产余额
+    if (r1?.ok) {
+      try {
+        const data = await r1.json();
+        const bal = data?.data?.balance ?? data?.balance ?? data?.equity ?? null;
+        const cur = data?.data?.currency ?? data?.currency ?? '';
+        if (bal != null) {
+          _accountBalance = Number(bal);
+          const s = Number(bal).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          document.getElementById('balance-val').textContent = cur ? `${s} ${cur}` : s;
+        }
+      } catch(_) {}
     }
-  } catch(_) {}
 
-  // 最近5工作日 + 本月 已实现收益
+    // MT5 账户信息
+    if (r2?.ok) {
+      try {
+        const d2 = await r2.json();
+        const mt5data = d2?.data ?? d2;
+        const mt5id = mt5data?.login ?? mt5data?.mt5_id ?? mt5data?.id ?? null;
+        const sol   = mt5data?.stop_out_level ?? mt5data?.stopOutLevel ?? null;
+        const mlv   = mt5data?.margin_level   ?? mt5data?.marginLevel  ?? null;
+        const mfr   = mt5data?.margin_free    ?? mt5data?.marginFree   ?? null;
+        const upnl  = mt5data?.unrealized_pnl ?? mt5data?.unrealizedPnl ?? mt5data?.floating_pl ?? null;
+        if (mt5id != null) document.getElementById('mt5-id').textContent = mt5id;
+        if (sol   != null) document.getElementById('stop-out-val').textContent = `${sol}%`;
+        if (mlv   != null) document.getElementById('margin-level-val').textContent = `${_fmtNum(mlv)}%`;
+        if (mfr   != null) document.getElementById('margin-free-val').textContent = _fmtNum(mfr);
+        if (upnl  != null) {
+          const el = document.getElementById('upnl-val');
+          el.textContent = (upnl >= 0 ? '+' : '') + _fmtNum(upnl);
+          el.style.color = upnl >= 0 ? '#56d364' : '#f85149';
+        }
+      } catch(_) {}
+    }
+  } finally {
+    _assetsRefreshing = false;
+  }
+}
+
+// pnl_summary 单独缓慢轮询（每 30s）
+async function loadPnlSummary() {
   try {
     const res3 = await fetch('/api/pnl_summary');
     if (res3.status === 401) { window.location.href = '/login'; return; }
-    if (res3.ok) {
-      const d3 = await res3.json();
-      const bal = _accountBalance || 0;
+    if (!res3.ok) return;
+    const d3 = await res3.json();
+    const bal = _accountBalance || 0;
 
-      // 渲染最近5个工作日
-      const container = document.getElementById('recent-days-container');
-      container.innerHTML = '';
-      for (const day of d3.recent_days) {
-        const pnl   = day.pnl;
-        const rate  = bal > 0 ? (pnl / bal * 100) : null;
-        const sign  = pnl >= 0 ? '+' : '';
-        const color = pnl > 0 ? '#26a641' : (pnl < 0 ? '#f85149' : '#8b949e');
-        const label = day.date.slice(5).replace('-', '/');
-        const rateStr = rate != null
-          ? ` (${rate >= 0 ? '+' : ''}${rate.toFixed(2)}%)`
-          : '';
-        const row = document.createElement('div');
-        row.className = 'sidebar-row';
-        row.innerHTML = `<span class="sr-label">${label}</span>`
-          + `<span class="sr-val" style="color:${color};font-size:11px">${sign}${pnl.toFixed(2)}<span style="color:${color};font-size:10px">${rateStr}</span></span>`;
-        container.appendChild(row);
-      }
-
-      // 本月汇总
-      const mp    = d3.month_pnl;
-      const mr    = bal > 0 ? (mp / bal * 100) : null;
-      const mSign = mp >= 0 ? '+' : '';
-      const mClr  = mp > 0 ? '#26a641' : (mp < 0 ? '#f85149' : '#8b949e');
-      const mEl   = document.getElementById('month-pnl-val');
-      mEl.textContent = mSign + mp.toFixed(2);
-      mEl.style.color = mClr;
-      const rEl = document.getElementById('month-rate-val');
-      rEl.textContent = mr != null ? `${mr >= 0 ? '+' : ''}${mr.toFixed(2)}%` : '--';
-      rEl.style.color = mClr;
+    // 渲染最近5个工作日
+    const container = document.getElementById('recent-days-container');
+    container.innerHTML = '';
+    for (const day of d3.recent_days) {
+      const pnl   = day.pnl;
+      const rate  = bal > 0 ? (pnl / bal * 100) : null;
+      const sign  = pnl >= 0 ? '+' : '';
+      const color = pnl > 0 ? '#26a641' : (pnl < 0 ? '#f85149' : '#8b949e');
+      const label = day.date.slice(5).replace('-', '/');
+      const rateStr = rate != null
+        ? ` (${rate >= 0 ? '+' : ''}${rate.toFixed(2)}%)`
+        : '';
+      const row = document.createElement('div');
+      row.className = 'sidebar-row';
+      row.innerHTML = `<span class="sr-label">${label}</span>`
+        + `<span class="sr-val" style="color:${color};font-size:11px">${sign}${pnl.toFixed(2)}<span style="color:${color};font-size:10px">${rateStr}</span></span>`;
+      container.appendChild(row);
     }
+
+    // 本月汇总
+    const mp    = d3.month_pnl;
+    const mr    = bal > 0 ? (mp / bal * 100) : null;
+    const mSign = mp >= 0 ? '+' : '';
+    const mClr  = mp > 0 ? '#26a641' : (mp < 0 ? '#f85149' : '#8b949e');
+    const mEl   = document.getElementById('month-pnl-val');
+    mEl.textContent = mSign + mp.toFixed(2);
+    mEl.style.color = mClr;
+    const rEl = document.getElementById('month-rate-val');
+    rEl.textContent = mr != null ? `${mr >= 0 ? '+' : ''}${mr.toFixed(2)}%` : '--';
+    rEl.style.color = mClr;
   } catch(_) {}
 }
 
@@ -1385,29 +1412,43 @@ function togglePositionsPanel() {
 }
 
 async function loadPositions() {
+  if (_posRefreshing) return;        // 防并发
+  _posRefreshing = true;
   try {
     const res = await fetch('/api/positions');
     if (res.status === 401) { window.location.href = '/login'; return; }
     if (!res.ok) return;
     const data  = await res.json();
     const list  = data?.data?.list ?? [];
-    const tbody = document.getElementById('pos-tbody');
-    const empty = document.getElementById('pos-empty');
-    const count = document.getElementById('pos-count');
+
+    // 数据未变则跳过全量 DOM 重建，不寄发 reflow
+    const newJSON = JSON.stringify(list);
+    const changed = newJSON !== _prevPosJSON;
+
+    const totalPnl = list.reduce((s, p) => s + parseFloat(p.unrealized_pnl ?? 0), 0);
+    const totalPnlEl = document.getElementById('total-pnl-val');
+    const count      = document.getElementById('pos-count');
     count.textContent = list.length ? `(${list.length})` : '';
-    tbody.innerHTML   = '';
-    // 计算总盈亏
-    const totalPnlEl  = document.getElementById('total-pnl-val');
+
     if (!list.length) {
-      empty.style.display = '';
+      if (changed) {
+        document.getElementById('pos-tbody').innerHTML = '';
+        document.getElementById('pos-empty').style.display = '';
+        _prevPosJSON = newJSON;
+      }
       totalPnlEl.textContent = '--';
       totalPnlEl.style.color = '';
       return;
     }
-    empty.style.display = 'none';
-    const totalPnl = list.reduce((s, p) => s + parseFloat(p.unrealized_pnl ?? 0), 0);
+    document.getElementById('pos-empty').style.display = 'none';
     totalPnlEl.textContent = (totalPnl >= 0 ? '+' : '') + totalPnl.toFixed(2);
     totalPnlEl.style.color = totalPnl >= 0 ? '#26a641' : '#f85149';
+
+    if (!changed) return;             // 价格、PnL 均未变化，跳过
+    _prevPosJSON = newJSON;
+
+    const tbody = document.getElementById('pos-tbody');
+    tbody.innerHTML = '';
     for (const p of list) {
       const pnl      = parseFloat(p.unrealized_pnl ?? 0);
       const isLong   = (p.position_dir ?? '').toLowerCase() === 'long';
@@ -1434,7 +1475,9 @@ async function loadPositions() {
       `;
       tbody.appendChild(tr);
     }
-  } catch(_) {}
+  } catch(_) {} finally {
+    _posRefreshing = false;
+  }
 }
 
 // ════════════════════════════════════════════
@@ -1919,8 +1962,10 @@ function downloadDiary() {
 // ════════════════════════════════════════════
 async function doLogout() {
   // 先清除所有定时器，避免跳转前继续发出已无效的 API 请求
-  if (typeof _refreshTimer !== 'undefined' && _refreshTimer) clearInterval(_refreshTimer);
+  _refreshChainId++;   // 指定 K 线自链
+  if (typeof _refreshTimer !== 'undefined' && _refreshTimer) clearTimeout(_refreshTimer);
   if (typeof _assetsTimer  !== 'undefined' && _assetsTimer)  clearInterval(_assetsTimer);
+  if (typeof _pnlTimer     !== 'undefined' && _pnlTimer)     clearInterval(_pnlTimer);
   if (typeof _posTimer     !== 'undefined' && _posTimer)     clearInterval(_posTimer);
   await fetch('/api/logout', { method: 'POST' }).catch(() => {});
   window.location.href = '/login';
@@ -1966,11 +2011,14 @@ loadConfig();
 renderMABadges();
 loadKlines(currentInterval);
 loadAssets();
+loadPnlSummary();
 loadPositions();
-// 资产信息每 3 秒刷新一次
+// 资产信息（余额 + MT5）并行拉取，3s 刷新一次
 const _assetsTimer = setInterval(loadAssets, 3000);
+// 收益汇总 3s 刷新一次（不需要超短线频率）
+_pnlTimer = setInterval(loadPnlSummary, 3000);
 // 头寸每 0.1 秒刷新一次
-_posTimer = setInterval(loadPositions, 100);
+_posTimer = setInterval(loadPositions, 50);
 </script>
 </body>
 </html>
