@@ -45,7 +45,7 @@ from itsdangerous import BadSignature, SignatureExpired, TimestampSigner
 
 # ── 常量 ──────────────────────────────────────
 HOST            = "https://api.gateio.ws"
-WS_HOST         = "wss://fx-ws.gateio.ws/v4/ws"
+WS_HOST         = "wss://fx-ws.gateio.ws/v4/ws/tradfi"
 KLINE_INTERVALS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"]
 TEMPLATES_DIR   = Path(__file__).parent / "templates"
 CONFIG_FILE     = Path(__file__).parent / "config.enc"
@@ -242,20 +242,17 @@ class _KlineWSManager:
         symbol, interval = key
         while True:
             try:
-                async with _ws_lib.connect(
-                    WS_HOST,
-                    additional_headers={"X-Gate-Size-Decimal": "1"},
-                ) as gate_ws:
+                async with _ws_lib.connect(WS_HOST) as gate_ws:
                     sub_msg = json.dumps({
                         "time":    int(time.time()),
-                        "channel": "futures.candlesticks",
+                        "channel": "tradfi.candlesticks",
                         "event":   "subscribe",
                         "payload": [interval, symbol],
                     })
                     await gate_ws.send(sub_msg)
                     async for raw in gate_ws:
                         data = json.loads(raw)
-                        if (data.get("channel") == "futures.candlesticks"
+                        if (data.get("channel") == "tradfi.candlesticks"
                                 and data.get("event") == "update"):
                             for r in data.get("result", []):
                                 candle = {
@@ -274,6 +271,92 @@ class _KlineWSManager:
 
 
 _ws_manager = _KlineWSManager()
+
+
+# ── WebSocket 鉴权签名 ────────────────────────
+def gen_ws_sign(api_key: str, api_secret: str,
+               channel: str, event: str, timestamp: int) -> dict:
+    """Gate TradFi WebSocket 自定义帧签名 (HMAC-SHA512)"""
+    s    = f"channel={channel}&event={event}&time={timestamp}"
+    sign = hmac.new(api_secret.encode("utf-8"), s.encode("utf-8"), hashlib.sha512).hexdigest()
+    return {"method": "api_key", "KEY": api_key, "SIGN": sign}
+
+
+# ── 私有频道（仓位/余额）WebSocket 管理器 ────────
+class _PrivateWSManager:
+    """每个 api_key 维持一条认证上游连接，订阅 tradfi.position + tradfi.balance"""
+
+    def __init__(self) -> None:
+        self._clients:    Dict[str, Set[asyncio.Queue]]  = {}
+        self._creds:      Dict[str, Tuple[str, str]]     = {}
+        self._gate_tasks: Dict[str, asyncio.Task]        = {}
+        self._lock = asyncio.Lock()
+
+    async def subscribe(self, api_key: str, api_secret: str,
+                        queue: asyncio.Queue) -> None:
+        async with self._lock:
+            if api_key not in self._clients:
+                self._clients[api_key] = set()
+                self._creds[api_key]   = (api_key, api_secret)
+            self._clients[api_key].add(queue)
+            if api_key not in self._gate_tasks or self._gate_tasks[api_key].done():
+                self._gate_tasks[api_key] = asyncio.create_task(
+                    self._gate_feeder(api_key)
+                )
+
+    async def unsubscribe(self, api_key: str, queue: asyncio.Queue) -> None:
+        async with self._lock:
+            if api_key in self._clients:
+                self._clients[api_key].discard(queue)
+                if not self._clients[api_key]:
+                    task = self._gate_tasks.pop(api_key, None)
+                    if task:
+                        task.cancel()
+                    del self._clients[api_key]
+                    self._creds.pop(api_key, None)
+
+    async def _broadcast(self, api_key: str, msg: dict) -> None:
+        for q in list(self._clients.get(api_key, set())):
+            try:
+                q.put_nowait(msg)
+            except asyncio.QueueFull:
+                pass
+
+    async def _gate_feeder(self, api_key: str) -> None:
+        """持续连接 Gate.io，订阅 tradfi.position + tradfi.balance，广播到各浏览器客户端"""
+        while True:
+            try:
+                key, secret = self._creds[api_key]
+                async with _ws_lib.connect(WS_HOST) as ws:
+                    ts = int(time.time())
+                    for ch in ("tradfi.position", "tradfi.balance"):
+                        auth = gen_ws_sign(key, secret, ch, "subscribe", ts)
+                        await ws.send(json.dumps({
+                            "time":    ts,
+                            "channel": ch,
+                            "event":   "subscribe",
+                            "payload": [],
+                            "auth":    auth,
+                        }))
+                    async for raw in ws:
+                        data  = json.loads(raw)
+                        ch    = data.get("channel", "")
+                        event = data.get("event",   "")
+                        if event != "update":
+                            continue
+                        if ch == "tradfi.position":
+                            await self._broadcast(api_key,
+                                {"type": "position", "result": data.get("result", [])})
+                        elif ch == "tradfi.balance":
+                            await self._broadcast(api_key,
+                                {"type": "balance",  "result": data.get("result", [])})
+            except asyncio.CancelledError:
+                return
+            except Exception:
+                await asyncio.sleep(5)   # 断线重连
+
+
+_private_ws_manager = _PrivateWSManager()
 
 
 # ── FastAPI ───────────────────────────────────
@@ -735,6 +818,40 @@ def api_trade_analysis(request: Request):
         "avg_consec_loss":       avg_cl,
         "equity_curve_chart":    f"data:image/png;base64,{img_base64}",
     })
+
+
+# ── 私有频道 WebSocket 接口（仓位 + 余额，需登录）────
+@app.websocket("/ws/private")
+async def ws_private(websocket: WebSocket):
+    token = websocket.cookies.get("session")
+    if not token:
+        await websocket.close(code=4001)
+        return
+    sid = _verify_token(token)
+    if not sid or sid not in _sessions:
+        await websocket.close(code=4001)
+        return
+
+    await websocket.accept()
+
+    creds      = _sessions[sid]
+    api_key    = creds["api_key"]
+    api_secret = creds["api_secret"]
+    queue: asyncio.Queue = asyncio.Queue(maxsize=200)
+    await _private_ws_manager.subscribe(api_key, api_secret, queue)
+    try:
+        while True:
+            try:
+                msg = await asyncio.wait_for(queue.get(), timeout=25.0)
+                await websocket.send_json(msg)
+            except asyncio.TimeoutError:
+                await websocket.send_json({"ping": True})
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        await _private_ws_manager.unsubscribe(api_key, queue)
 
 
 # ── 实时 K 线 WebSocket 接口（需登录）──────────

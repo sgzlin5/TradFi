@@ -691,6 +691,7 @@
 const SYMBOLS   = ['XAUUSD', 'NAS100'];
 const INTERVALS = ['1m','5m','15m','30m','1h','4h','1d'];
 let _klineWS         = null;         // 实时 K 线 WebSocket 连接
+let _privateWS       = null;         // 私有频道（仓位/余额）WebSocket 连接
 let _accountBalance   = null;    // 当前账户余额，用于收益率计算
 let _macdFitted      = false;    // MACD 面板只 fitContent 一次，避免缩放被重置
 let _posTimer        = null;
@@ -1215,6 +1216,36 @@ async function loadKlines(interval) {
   } catch(e) {
     document.getElementById('kline-status').textContent = '加载失败: ' + e.message;
   }
+}
+
+// ════════════════════════════════════════════
+//  私有频道 WebSocket（仓位 + 余额实时推送）
+// ════════════════════════════════════════════
+function connectPrivateWS() {
+  if (_privateWS) {
+    _privateWS.onclose = null;
+    _privateWS.close(1000, 'reconnect');
+    _privateWS = null;
+  }
+
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws    = new WebSocket(`${proto}//${location.host}/ws/private`);
+  _privateWS  = ws;
+
+  ws.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    if (data.ping) return;
+    if (data.type === 'position') loadPositions();
+    if (data.type === 'balance')  loadAssets();
+  };
+
+  ws.onclose = (e) => {
+    if (ws === _privateWS && e.code !== 1000) {
+      setTimeout(connectPrivateWS, 3000);
+    }
+  };
+
+  ws.onerror = () => {};
 }
 
 // ════════════════════════════════════════════
@@ -1983,10 +2014,11 @@ renderMABadges();
 loadKlines(currentInterval);
 loadAssets();
 loadPositions();
-// 资产信息每 3 秒刷新一次
-const _assetsTimer = setInterval(loadAssets, 3000);
-// 头寸每 0.1 秒刷新一次
-_posTimer = setInterval(loadPositions, 100);
+connectPrivateWS();
+// 资产信息兜底刷新（每 10 秒），主要依赖私有 WS 推送触发
+const _assetsTimer = setInterval(loadAssets, 10000);
+// 仓位兜底刷新（每 2 秒），P&L 更新依赖轮询；私有 WS 推送时立即刷新
+_posTimer = setInterval(loadPositions, 2000);
 </script>
 </body>
 </html>
