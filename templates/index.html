@@ -1190,26 +1190,12 @@ function deleteTrendLine(id) {
 }
 
 function handleChartClick(param) {
-  if (!param.time) return;
+  if (!param.time || !param.point) return;
   
   const time = param.time;
-  let price = null;
+  const price = param.point.y;
   
-  if (param.seriesData && param.seriesData.size > 0) {
-    const firstSeries = param.seriesData.values().next().value;
-    if (firstSeries && firstSeries.value !== undefined) {
-      price = firstSeries.value;
-    }
-  }
-  
-  if (!price) {
-    const candle = currentCandles.find(c => c.time === time);
-    if (candle) {
-      price = (candle.high + candle.low) / 2;
-    }
-  }
-  
-  if (price === null || isNaN(price)) return;
+  if (isNaN(price)) return;
   
   const now = Date.now();
   const isDoubleClick = (now - lastClickTime) < DOUBLE_CLICK_DELAY;
@@ -1262,59 +1248,32 @@ function handleChartClick(param) {
 }
 
 function handleCrosshairMove(param) {
-  if (!param.time) return;
+  if (!param.time || !param.point) return;
+  
+  const time = param.time;
+  const price = param.point.y;
+  
+  if (isNaN(price)) return;
   
   if (drawMode && drawingLine) {
-    let price = null;
-    if (param.seriesData && param.seriesData.size > 0) {
-      const firstSeries = param.seriesData.values().next().value;
-      if (firstSeries && firstSeries.value !== undefined) {
-        price = firstSeries.value;
-      }
-    }
-    
-    if (!price) {
-      const candle = currentCandles.find(c => c.time === param.time);
-      if (candle) {
-        price = (candle.high + candle.low) / 2;
-      }
-    }
-    
-    if (price !== null && !isNaN(price) && previewSeries) {
+    if (previewSeries) {
       previewSeries.setData([
         { time: drawingLine.p1.time, value: drawingLine.p1.price },
         { time: param.time, value: price }
       ]);
     }
   } else if (draggingLineId !== null) {
-    let price = null;
-    if (param.seriesData && param.seriesData.size > 0) {
-      const firstSeries = param.seriesData.values().next().value;
-      if (firstSeries && firstSeries.value !== undefined) {
-        price = firstSeries.value;
+    const line = trendLines.find(l => l.id === draggingLineId);
+    if (line) {
+      if (draggingPoint === 'p1') {
+        line.p1 = { time, price };
+      } else if (draggingPoint === 'p2') {
+        line.p2 = { time, price };
       }
-    }
-    
-    if (!price) {
-      const candle = currentCandles.find(c => c.time === param.time);
-      if (candle) {
-        price = (candle.high + candle.low) / 2;
-      }
-    }
-    
-    if (price !== null && !isNaN(price)) {
-      const line = trendLines.find(l => l.id === draggingLineId);
-      if (line) {
-        if (draggingPoint === 'p1') {
-          line.p1 = { time: param.time, price };
-        } else if (draggingPoint === 'p2') {
-          line.p2 = { time: param.time, price };
-        }
-        line.series.setData([
-          { time: line.p1.time, value: line.p1.price },
-          { time: line.p2.time, value: line.p2.price }
-        ]);
-      }
+      line.series.setData([
+        { time: line.p1.time, value: line.p1.price },
+        { time: line.p2.time, value: line.p2.price }
+      ]);
     }
   } else {
     checkHover(param.time);
@@ -1368,26 +1327,12 @@ function checkHover(time) {
 }
 
 function checkDragStart(param) {
-  if (!param.time) return false;
+  if (!param.time || !param.point) return false;
   
   const time = param.time;
-  let price = null;
+  const price = param.point.y;
   
-  if (param.seriesData && param.seriesData.size > 0) {
-    const firstSeries = param.seriesData.values().next().value;
-    if (firstSeries && firstSeries.value !== undefined) {
-      price = firstSeries.value;
-    }
-  }
-  
-  if (!price) {
-    const candle = currentCandles.find(c => c.time === time);
-    if (candle) {
-      price = (candle.high + candle.low) / 2;
-    }
-  }
-  
-  if (price === null || isNaN(price)) return false;
+  if (isNaN(price)) return false;
   
   const line = trendLines.find(l => l.id === hoveredLineId);
   if (!line) return false;
