@@ -1183,10 +1183,12 @@ function deleteTrendLine(id) {
 }
 
 function handleChartClick(param) {
-  if (!drawMode || !param.point) return;
+  if (!drawMode || !param.time) return;
   
   const time = param.time;
-  const price = param.point.y;
+  const price = param.point ? mainChart.priceScale('right').coordinateToPrice(param.point.y, param.time) : param.seriesData.get(param.time)?.value;
+  
+  if (price === undefined || price === null) return;
   
   if (!drawingLine) {
     drawingLine = { p1: { time, price }, p2: null };
