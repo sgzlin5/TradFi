@@ -1244,13 +1244,14 @@ function handleChartClick(param) {
     } else {
       // 落下第二个端点，完成线段
       if (time === drawingLine.p1.time) return; // 同一根K线，忽略
-      createTrendLine(drawingLine.p1, { time, price });
-      if (previewSeries) { previewSeries.setData([]); }
+      const p1 = drawingLine.p1;
       drawingLine = null;
-      // 完成后自动退出绘制模式
+      // 无论 createTrendLine 是否成功，都强制退出绘制模式
       drawMode = false;
       document.getElementById('btn-draw').classList.remove('ind-on');
       document.getElementById('main-chart-wrap').style.cursor = '';
+      if (previewSeries) { previewSeries.setData([]); }
+      try { createTrendLine(p1, { time, price }); } catch(e) { console.warn('createTrendLine error', e); }
     }
     return;
   }
