@@ -1186,9 +1186,23 @@ function handleChartClick(param) {
   if (!drawMode || !param.time) return;
   
   const time = param.time;
-  const price = param.point ? mainChart.priceScale('right').coordinateToPrice(param.point.y, param.time) : param.seriesData.get(param.time)?.value;
+  let price = null;
   
-  if (price === undefined || price === null) return;
+  if (param.seriesData && param.seriesData.size > 0) {
+    const firstSeries = param.seriesData.values().next().value;
+    if (firstSeries && firstSeries.value !== undefined) {
+      price = firstSeries.value;
+    }
+  }
+  
+  if (!price) {
+    const candle = currentCandles.find(c => c.time === time);
+    if (candle) {
+      price = (candle.high + candle.low) / 2;
+    }
+  }
+  
+  if (price === null || isNaN(price)) return;
   
   if (!drawingLine) {
     drawingLine = { p1: { time, price }, p2: null };
