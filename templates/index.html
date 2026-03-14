@@ -835,16 +835,19 @@ let macdChart = null, macdLineSeries = null, signalLineSeries = null, histSeries
 
 // ── 趋势线配置 ────────────────────────────────
 let drawMode = false;              // 绘制模式开关
-let drawingLine = null;            // 正在绘制的线段
-let previewSeries = null;           // 预览线段
-let trendLines = [];               // 已保存的趋势线 [{id, symbol, interval, p1: {time, price}, p2: {time, price}, series, markers}]
+let drawingLine = null;            // 正在绘制的线段 {p1: {time, price}}
+let previewSeries = null;          // 预览线段
+let trendLines = [];               // 已保存的趋势线 [{id, symbol, interval, p1, p2, series}]
 let nextLineId = 1;                // 下一个线段ID
 let hoveredLineId = null;          // 当前悬停的线段ID
 let draggingLineId = null;         // 当前拖拽的线段ID
-let draggingPoint = null;          // 拖拽的点 'p1' 或 'p2'
+let draggingPoint = null;          // 拖拽类型: 'p1' | 'p2' | 'body'
+let draggingBodyAnchor = null;     // 整体拖拽锚点 {p1Price, p2Price, clickPrice}
 let lastClickTime = 0;             // 用于检测双击
 const DRAWING_KEY = 'tradfi_trendlines';
 const DOUBLE_CLICK_DELAY = 300;    // 双击检测延迟(ms)
+const HOVER_PX   = 6;              // 悬停检测像素阈值
+const DRAG_PX    = 14;             // 端点拖拽检测像素半径
 
 // ════════════════════════════════════════════
 //  主图表
@@ -1190,123 +1193,146 @@ function deleteTrendLine(id) {
 }
 
 function handleChartClick(param) {
-  if (!param.time || !param.point) return;
-  
-  const time = param.time;
-  const price = param.point.y;
-  
-  if (isNaN(price)) return;
-  
+  if (!param.point) return;
+
+  // 将像素 Y 坐标转换为实际价格
+  const price = candleSeries.coordinateToPrice(param.point.y);
+  if (price === null || isNaN(price)) return;
+
+  const time = param.time;  // 对齐到K线时间
+
   const now = Date.now();
   const isDoubleClick = (now - lastClickTime) < DOUBLE_CLICK_DELAY;
   lastClickTime = now;
-  
+
   if (drawMode) {
+    if (!time) return;
     if (!drawingLine) {
-      drawingLine = { p1: { time, price }, p2: null };
+      // 落下第一个端点
+      drawingLine = { p1: { time, price } };
       if (!previewSeries) {
         previewSeries = mainChart.addLineSeries({
           color: '#ffeb3b',
           lineWidth: 1,
           lineStyle: LightweightCharts.LineStyle.Dashed,
           priceLineVisible: false,
-          lastValueVisible: false
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
         });
       }
     } else {
-      drawingLine.p2 = { time, price };
-      createTrendLine(drawingLine.p1, drawingLine.p2);
-      if (previewSeries) {
-        previewSeries.setData([]);
-      }
+      // 落下第二个端点，完成线段
+      if (time === drawingLine.p1.time) return; // 同一根K线，忽略
+      createTrendLine(drawingLine.p1, { time, price });
+      if (previewSeries) { previewSeries.setData([]); }
       drawingLine = null;
+      // 完成后自动退出绘制模式
+      drawMode = false;
+      document.getElementById('btn-draw').classList.remove('ind-on');
+      document.getElementById('main-chart-wrap').style.cursor = '';
     }
-  } else {
-    if (draggingLineId !== null) {
-      const line = trendLines.find(l => l.id === draggingLineId);
-      if (line) {
-        if (draggingPoint === 'p1') {
-          line.p1 = { time, price };
-        } else if (draggingPoint === 'p2') {
-          line.p2 = { time, price };
-        }
-        line.series.setData([
-          { time: line.p1.time, value: line.p1.price },
-          { time: line.p2.time, value: line.p2.price }
-        ]);
-        saveTrendLines();
-      }
-      draggingLineId = null;
-      draggingPoint = null;
-    } else if (isDoubleClick && hoveredLineId !== null) {
-      deleteTrendLine(hoveredLineId);
-      hoveredLineId = null;
-    } else if (!isDoubleClick && hoveredLineId !== null) {
-      checkDragStart(param);
-    }
+    return;
   }
-}
 
-function handleCrosshairMove(param) {
-  if (!param.time || !param.point) return;
-  
-  const time = param.time;
-  const price = param.point.y;
-  
-  if (isNaN(price)) return;
-  
-  if (drawMode && drawingLine) {
-    if (previewSeries) {
-      previewSeries.setData([
-        { time: drawingLine.p1.time, value: drawingLine.p1.price },
-        { time: param.time, value: price }
-      ]);
-    }
-  } else if (draggingLineId !== null) {
+  if (draggingLineId !== null) {
+    // 第二次点击：确认拖拽终点
     const line = trendLines.find(l => l.id === draggingLineId);
-    if (line) {
+    if (line && time) {
       if (draggingPoint === 'p1') {
         line.p1 = { time, price };
       } else if (draggingPoint === 'p2') {
         line.p2 = { time, price };
+      } else if (draggingPoint === 'body' && draggingBodyAnchor) {
+        const delta = price - draggingBodyAnchor.clickPrice;
+        line.p1.price = draggingBodyAnchor.p1Price + delta;
+        line.p2.price = draggingBodyAnchor.p2Price + delta;
       }
-      line.series.setData([
-        { time: line.p1.time, value: line.p1.price },
-        { time: line.p2.time, value: line.p2.price }
-      ]);
+      _updateLineSeries(line);
+      saveTrendLines();
     }
-  } else {
-    checkHover(param.time);
+    draggingLineId = null;
+    draggingPoint = null;
+    draggingBodyAnchor = null;
+    return;
+  }
+
+  if (!time) return;
+
+  if (isDoubleClick && hoveredLineId !== null) {
+    deleteTrendLine(hoveredLineId);
+    hoveredLineId = null;
+    return;
+  }
+
+  if (hoveredLineId !== null) {
+    checkDragStart(param.point, price);
   }
 }
 
-function checkHover(time) {
+function handleCrosshairMove(param) {
+  if (!param.point) return;
+
+  const pixelY = param.point.y;
+  const price  = candleSeries.coordinateToPrice(pixelY);
+  if (price === null || isNaN(price)) return;
+
+  const time = param.time;  // 对齐到K线时间，可能为 undefined
+
+  if (drawMode && drawingLine) {
+    // 更新预览线（需保证时间升序）
+    if (previewSeries && time && time !== drawingLine.p1.time) {
+      const pts = [
+        { time: drawingLine.p1.time, value: drawingLine.p1.price },
+        { time, value: price },
+      ];
+      if (pts[0].time > pts[1].time) pts.reverse();
+      previewSeries.setData(pts);
+    }
+  } else if (draggingLineId !== null) {
+    // 实时预览拖拽
+    const line = trendLines.find(l => l.id === draggingLineId);
+    if (line && time) {
+      if (draggingPoint === 'p1') {
+        line.p1 = { time, price };
+      } else if (draggingPoint === 'p2') {
+        line.p2 = { time, price };
+      } else if (draggingPoint === 'body' && draggingBodyAnchor) {
+        const delta = price - draggingBodyAnchor.clickPrice;
+        line.p1.price = draggingBodyAnchor.p1Price + delta;
+        line.p2.price = draggingBodyAnchor.p2Price + delta;
+      }
+      _updateLineSeries(line);
+    }
+  } else {
+    checkHover(time, pixelY);
+  }
+}
+
+// 用像素距离检测鼠标是否在趋势线上
+function checkHover(time, pixelY) {
+  if (!time) return;
   let newHoveredId = null;
-  const threshold = 86400000;
-  
+
   for (const line of trendLines) {
-    const t1 = line.p1.time;
-    const t2 = line.p2.time;
-    
-    if (time >= Math.min(t1, t2) && time <= Math.max(t1, t2)) {
-      const ratio = (time - t1) / (t2 - t1);
-      const linePrice = line.p1.price + ratio * (line.p2.price - line.p1.price);
-      
-      let currentPrice = null;
-      if (currentCandles.length > 0) {
-        const candle = currentCandles.find(c => c.time === time);
-        if (candle) {
-          currentPrice = (candle.high + candle.low) / 2;
-        }
-      }
-      
-      if (currentPrice !== null && Math.abs(currentPrice - linePrice) < 10) {
-        newHoveredId = line.id;
-        break;
-      }
+    if (!line.series) continue;
+    const t1 = line.p1.time, t2 = line.p2.time;
+    const tMin = Math.min(t1, t2), tMax = Math.max(t1, t2);
+    if (time < tMin || time > tMax) continue;
+
+    // 在该时间点上插值理论价格
+    const ratio    = (t2 !== t1) ? (time - t1) / (t2 - t1) : 0;
+    const linePx   = line.p1.price + ratio * (line.p2.price - line.p1.price);
+
+    // 将理论价格转换为像素 Y 后与鼠标像素 Y 比较
+    const linePixY = candleSeries.priceToCoordinate(linePx);
+    if (linePixY === null) continue;
+
+    if (Math.abs(pixelY - linePixY) <= HOVER_PX) {
+      newHoveredId = line.id;
+      break;
     }
   }
-  
+
   if (newHoveredId !== hoveredLineId) {
     if (hoveredLineId !== null) {
       const oldLine = trendLines.find(l => l.id === hoveredLineId);
@@ -1314,45 +1340,64 @@ function checkHover(time) {
         oldLine.series.applyOptions({ color: '#ffeb3b', lineWidth: 2 });
       }
     }
-    
     hoveredLineId = newHoveredId;
-    
     if (hoveredLineId !== null) {
       const newLine = trendLines.find(l => l.id === hoveredLineId);
       if (newLine && newLine.series) {
         newLine.series.applyOptions({ color: '#ffffff', lineWidth: 3 });
       }
     }
+    // 鼠标悬停在趋势线上时改变光标样式
+    document.getElementById('main-chart-wrap').style.cursor =
+      hoveredLineId !== null ? 'pointer' : '';
   }
 }
 
-function checkDragStart(param) {
-  if (!param.time || !param.point) return false;
-  
-  const time = param.time;
-  const price = param.point.y;
-  
-  if (isNaN(price)) return false;
-  
+// 根据点击位置判断拖拽类型：端点 p1 / p2 或整体 body
+function checkDragStart(point, price) {
   const line = trendLines.find(l => l.id === hoveredLineId);
   if (!line) return false;
-  
-  const timeThreshold = 86400000;
-  const priceThreshold = 50;
-  
-  if (Math.abs(time - line.p1.time) < timeThreshold && Math.abs(price - line.p1.price) < priceThreshold) {
+
+  const px = point.x, py = point.y;
+
+  // 检测是否接近端点 p1
+  const x1 = mainChart.timeScale().timeToCoordinate(line.p1.time);
+  const y1 = candleSeries.priceToCoordinate(line.p1.price);
+  if (x1 !== null && y1 !== null && Math.hypot(px - x1, py - y1) <= DRAG_PX) {
     draggingLineId = line.id;
-    draggingPoint = 'p1';
+    draggingPoint  = 'p1';
     return true;
   }
-  
-  if (Math.abs(time - line.p2.time) < timeThreshold && Math.abs(price - line.p2.price) < priceThreshold) {
+
+  // 检测是否接近端点 p2
+  const x2 = mainChart.timeScale().timeToCoordinate(line.p2.time);
+  const y2 = candleSeries.priceToCoordinate(line.p2.price);
+  if (x2 !== null && y2 !== null && Math.hypot(px - x2, py - y2) <= DRAG_PX) {
     draggingLineId = line.id;
-    draggingPoint = 'p2';
+    draggingPoint  = 'p2';
     return true;
   }
-  
-  return false;
+
+  // 点击在线段中段 → 整体平移
+  draggingLineId    = line.id;
+  draggingPoint     = 'body';
+  draggingBodyAnchor = {
+    p1Price:    line.p1.price,
+    p2Price:    line.p2.price,
+    clickPrice: price,
+  };
+  return true;
+}
+
+// 将趋势线端点数据（时间升序）写入 LineSeries
+function _updateLineSeries(line) {
+  if (!line.series) return;
+  const pts = [
+    { time: line.p1.time, value: line.p1.price },
+    { time: line.p2.time, value: line.p2.price },
+  ];
+  if (pts[0].time > pts[1].time) pts.reverse();
+  line.series.setData(pts);
 }
 
 function createTrendLine(p1, p2) {
@@ -1360,22 +1405,20 @@ function createTrendLine(p1, p2) {
     color: '#ffeb3b',
     lineWidth: 2,
     priceLineVisible: false,
-    lastValueVisible: false
+    lastValueVisible: false,
+    crosshairMarkerVisible: false,
   });
-  series.setData([
-    { time: p1.time, value: p1.price },
-    { time: p2.time, value: p2.price }
-  ]);
-  
+
   const line = {
     id: nextLineId++,
     symbol: currentSymbol,
     interval: currentInterval,
     p1: { ...p1 },
     p2: { ...p2 },
-    series
+    series,
   };
-  
+
+  _updateLineSeries(line);
   trendLines.push(line);
   saveTrendLines();
   return line;
@@ -1525,13 +1568,18 @@ function applyMACDConfig() {
 // ════════════════════════════════════════════
 function toggleDrawMode() {
   drawMode = !drawMode;
-  const btn = document.getElementById('btn-draw');
+  const btn  = document.getElementById('btn-draw');
+  const wrap = document.getElementById('main-chart-wrap');
   btn.classList.toggle('ind-on', drawMode);
-  if (!drawMode) {
+  if (drawMode) {
+    wrap.style.cursor = 'crosshair';
+  } else {
     drawingLine = null;
-    if (previewSeries) {
-      previewSeries.setData([]);
-    }
+    draggingLineId = null;
+    draggingPoint  = null;
+    draggingBodyAnchor = null;
+    if (previewSeries) { previewSeries.setData([]); }
+    wrap.style.cursor = '';
   }
 }
 
@@ -2611,6 +2659,35 @@ connectTickerWS(currentSymbol);
 const _assetsTimer = setInterval(loadAssets, 10000);
 // 仓位兜底刷新（每 2 秒），P&L 更新依赖轮询；私有 WS 推送时立即刷新
 _posTimer = setInterval(loadPositions, 2000);
+
+// Escape 键：取消当前绘制 / 取消拖拽
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    if (drawMode) {
+      drawingLine = null;
+      if (previewSeries) { previewSeries.setData([]); }
+      if (!draggingLineId) {
+        // 同时退出绘制模式
+        drawMode = false;
+        document.getElementById('btn-draw').classList.remove('ind-on');
+        document.getElementById('main-chart-wrap').style.cursor = '';
+      }
+    }
+    if (draggingLineId !== null) {
+      // 恢复拖拽前位置：重新从 trendLines 数据刷新（不保存）
+      draggingLineId = null;
+      draggingPoint  = null;
+      draggingBodyAnchor = null;
+    }
+  }
+  // Delete / Backspace 键：删除当前悬停的趋势线
+  if ((e.key === 'Delete' || e.key === 'Backspace') && !e.target.matches('input,textarea')) {
+    if (hoveredLineId !== null) {
+      deleteTrendLine(hoveredLineId);
+      hoveredLineId = null;
+    }
+  }
+});
 </script>
 </body>
 </html>
