@@ -504,6 +504,7 @@
     <button id="btn-bb"   onclick="toggleBB()">BB</button>
     <button id="btn-macd" onclick="toggleMACD()">MACD</button>
     <button id="btn-div"  onclick="toggleDivergence()" title="MACD能量柱背离标记">背离</button>
+    <button id="btn-draw" onclick="toggleDrawMode()" title="绘制趋势线">📏</button>
     <button onclick="openModal('ma')" style="display:none" id="btn-settings">⚙</button>
   </div>
 
@@ -739,6 +740,7 @@
       <div class="modal-tab active" data-tab="ma" onclick="switchTab('ma')">均线 MA</div>
       <div class="modal-tab" data-tab="bb" onclick="switchTab('bb')">布林带 BB</div>
       <div class="modal-tab" data-tab="macd" onclick="switchTab('macd')">MACD</div>
+      <div class="modal-tab" data-tab="trendline" onclick="switchTab('trendline')">趋势线</div>
     </div>
     <div class="modal-body">
 
@@ -775,6 +777,16 @@
           <span id="macd-height-val" style="font-size:12px;color:#8b949e;width:50px;text-align:right;">160px</span>
         </div>
         <button class="btn-apply" onclick="applyMACDConfig()">应用</button>
+      </div>
+
+      <!-- 趋势线面板 -->
+      <div class="tab-pane" id="tab-trendline">
+        <div style="font-size:12px;color:#8b949e;margin-bottom:10px;line-height:1.5;">
+          当前交易对和周期的趋势线：<br>
+          <span id="trendline-info" style="color:#e6edf3;"></span>
+        </div>
+        <div id="trendline-list" style="max-height:200px;overflow-y:auto;margin-bottom:10px;"></div>
+        <button class="btn-add-ma" onclick="clearTrendLines()" style="width:100%;">清除所有趋势线</button>
       </div>
 
     </div>
@@ -821,6 +833,13 @@ let macdCfg = {
 };
 let macdChart = null, macdLineSeries = null, signalLineSeries = null, histSeries = null;
 
+// ── 趋势线配置 ────────────────────────────────
+let drawMode = false;              // 绘制模式开关
+let drawingLine = null;            // 正在绘制的线段
+let trendLines = [];               // 已保存的趋势线 [{id, symbol, interval, p1: {time, price}, p2: {time, price}, series}]
+let nextLineId = 1;                // 下一个线段ID
+const DRAWING_KEY = 'tradfi_trendlines';
+
 // ════════════════════════════════════════════
 //  主图表
 // ════════════════════════════════════════════
@@ -840,6 +859,8 @@ const candleSeries = mainChart.addCandlestickSeries({
   borderUpColor: '#26a641', borderDownColor: '#f85149',
   wickUpColor:   '#26a641', wickDownColor:   '#f85149',
 });
+
+mainChart.subscribeClick(handleChartClick);
 
 // ════════════════════════════════════════════
 //  MACD 子图
@@ -1152,6 +1173,48 @@ function loadConfig() {
   } catch(_) {}
 }
 
+function deleteTrendLine(id) {
+  const idx = trendLines.findIndex(l => l.id === id);
+  if (idx !== -1) {
+    if (trendLines[idx].series) mainChart.removeSeries(trendLines[idx].series);
+    trendLines.splice(idx, 1);
+    saveTrendLines();
+  }
+}
+
+function handleChartClick(param) {
+  if (!drawMode || !param.point) return;
+  
+  const time = param.time;
+  const price = param.point.y;
+  
+  if (!drawingLine) {
+    drawingLine = { p1: { time, price }, p2: null };
+  } else {
+    drawingLine.p2 = { time, price };
+    const series = mainChart.addLineSeries({
+      color: '#ffeb3b',
+      lineWidth: 2,
+      priceLineVisible: false,
+      lastValueVisible: false
+    });
+    series.setData([
+      { time: drawingLine.p1.time, value: drawingLine.p1.price },
+      { time: drawingLine.p2.time, value: drawingLine.p2.price }
+    ]);
+    trendLines.push({
+      id: nextLineId++,
+      symbol: currentSymbol,
+      interval: currentInterval,
+      p1: drawingLine.p1,
+      p2: drawingLine.p2,
+      series
+    });
+    saveTrendLines();
+    drawingLine = null;
+  }
+}
+
 // ════════════════════════════════════════════
 //  MA 管理
 // ════════════════════════════════════════════
@@ -1292,10 +1355,71 @@ function applyMACDConfig() {
 }
 
 // ════════════════════════════════════════════
+//  趋势线绘制
+// ════════════════════════════════════════════
+function toggleDrawMode() {
+  drawMode = !drawMode;
+  const btn = document.getElementById('btn-draw');
+  btn.classList.toggle('ind-on', drawMode);
+  if (!drawMode && drawingLine) {
+    drawingLine = null;
+  }
+}
+
+function saveTrendLines() {
+  const lines = trendLines.map(l => ({
+    id: l.id,
+    symbol: l.symbol,
+    interval: l.interval,
+    p1: l.p1,
+    p2: l.p2
+  }));
+  try {
+    localStorage.setItem(DRAWING_KEY, JSON.stringify(lines));
+  } catch(_) {}
+}
+
+function loadTrendLines() {
+  loadTrendLinesForCurrent();
+}
+
+function clearTrendLines() {
+  trendLines.forEach(l => {
+    if (l.series) mainChart.removeSeries(l.series);
+  });
+  trendLines = [];
+  saveTrendLines();
+}
+
+function loadTrendLinesForCurrent() {
+  clearTrendLines();
+  try {
+    const raw = localStorage.getItem(DRAWING_KEY);
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    const maxId = saved.reduce((max, l) => Math.max(max, l.id), 0);
+    nextLineId = maxId + 1;
+    saved.forEach(l => {
+      if (l.symbol === currentSymbol && l.interval === currentInterval) {
+        const series = mainChart.addLineSeries({
+          color: '#ffeb3b',
+          lineWidth: 2,
+          priceLineVisible: false,
+          lastValueVisible: false
+        });
+        series.setData([{ time: l.p1.time, value: l.p1.price }, { time: l.p2.time, value: l.p2.price }]);
+        trendLines.push({ ...l, series });
+      }
+    });
+  } catch(_) {}
+}
+
+// ════════════════════════════════════════════
 //  模态框
 // ════════════════════════════════════════════
 function openModal(tab) {
   renderMAModalList();
+  if (tab === 'trendline') renderTrendlineList();
   switchTab(tab || 'ma');
   document.getElementById('modal-overlay').classList.remove('hidden');
 }
@@ -1304,6 +1428,28 @@ function closeModalOnBg(e) { if (e.target === document.getElementById('modal-ove
 function switchTab(name) {
   document.querySelectorAll('.modal-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
   document.querySelectorAll('.tab-pane').forEach(p => p.classList.toggle('active', p.id === 'tab-' + name));
+  if (name === 'trendline') renderTrendlineList();
+}
+
+function renderTrendlineList() {
+  const list = document.getElementById('trendline-list');
+  const info = document.getElementById('trendline-info');
+  info.textContent = `${currentSymbol} ${currentInterval} (${trendLines.length} 条)`;
+  
+  if (trendLines.length === 0) {
+    list.innerHTML = '<div style="color:#8b949e;font-size:12px;padding:10px;">暂无趋势线</div>';
+    return;
+  }
+  
+  list.innerHTML = trendLines.map(l => `
+    <div class="ma-list-item">
+      <span style="font-size:12px;color:#e6edf3;">线段 #${l.id}</span>
+      <span style="font-size:11px;color:#8b949e;margin-left:auto;">
+        ${new Date(l.p1.time * 1000).toLocaleDateString()} → ${new Date(l.p2.time * 1000).toLocaleDateString()}
+      </span>
+      <span class="rm-btn" onclick="deleteTrendLine(${l.id})">×</span>
+    </div>
+  `).join('');
 }
 
 // ════════════════════════════════════════════
@@ -2263,6 +2409,7 @@ SYMBOLS.forEach(sym => {
     currentSymbol = sym;
     symbolBar.querySelectorAll('button').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
+    clearTrendLines();
     loadKlines(currentInterval);
     connectOrderBookWS(sym);
     connectTickerWS(sym);
@@ -2280,6 +2427,7 @@ INTERVALS.forEach(iv => {
     currentInterval = iv;
     intervalBar.querySelectorAll('button').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
+    clearTrendLines();
     loadKlines(iv);
   });
   intervalBar.appendChild(btn);
@@ -2290,6 +2438,7 @@ INTERVALS.forEach(iv => {
 // ════════════════════════════════════════════
 loadConfig();
 renderMABadges();
+loadTrendLines();
 loadKlines(currentInterval);
 loadAssets();
 loadPositions();
