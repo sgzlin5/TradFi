@@ -128,7 +128,7 @@
   .cib-chg.neg { color: #f85149; font-weight: 700; }
   .cib-chg.neu { color: #8b949e; font-weight: 700; }
   #main-chart-wrap { flex: 1; min-height: 0; }
-  #macd-panel { height: 160px; flex-shrink: 0; border-top: 1px solid #30363d; }
+  #macd-panel { height: 160px; flex-shrink: 0; border-top: 1px solid #30363d; position: relative; }
 
   #macd-panel.hidden { display: none; }
   .modal-overlay {
@@ -768,6 +768,12 @@
         <div class="form-row"><label>信号线颜色</label><input type="color" id="macd-color-signal" value="#f0883e"></div>
         <div class="form-row"><label>柱(涨)颜色</label><input type="color" id="macd-color-up"     value="#26a641"></div>
         <div class="form-row"><label>柱(跌)颜色</label><input type="color" id="macd-color-down"   value="#f85149"></div>
+        <hr class="divider">
+        <div class="form-row">
+          <label>面板高度</label>
+          <input type="range" id="macd-height-range" min="100" max="400" value="160" style="flex:1;margin-right:8px;" oninput="document.getElementById('macd-height-val').textContent=this.value+'px'">
+          <span id="macd-height-val" style="font-size:12px;color:#8b949e;width:50px;text-align:right;">160px</span>
+        </div>
         <button class="btn-apply" onclick="applyMACDConfig()">应用</button>
       </div>
 
@@ -811,6 +817,7 @@ let macdCfg = {
   divergence: false,           // MACD 能量柱背离标记
   colorBearDiv: '#f85149',     // 顶背离颜色
   colorBullDiv: '#26a641',     // 底背离颜色
+  height: 160,                 // MACD面板高度
 };
 let macdChart = null, macdLineSeries = null, signalLineSeries = null, histSeries = null;
 
@@ -1027,6 +1034,10 @@ function renderAllIndicators() {
   // MACD
   if (macdCfg.enabled) {
     const panel = document.getElementById('macd-panel');
+    // 应用保存的高度
+    if (macdCfg.height && macdCfg.height !== 160) {
+      panel.style.height = macdCfg.height + 'px';
+    }
     if (panel.classList.contains('hidden')) {
       panel.classList.remove('hidden');
       createMacdChart();
@@ -1118,6 +1129,9 @@ function syncModalForms() {
   document.getElementById('macd-color-signal').value= macdCfg.colorSignal;
   document.getElementById('macd-color-up').value    = macdCfg.colorUp;
   document.getElementById('macd-color-down').value  = macdCfg.colorDown;
+  const macdHeight = macdCfg.height ?? 160;
+  document.getElementById('macd-height-range').value = macdHeight;
+  document.getElementById('macd-height-val').textContent = macdHeight + 'px';
 }
 
 function loadConfig() {
@@ -1266,8 +1280,12 @@ function applyMACDConfig() {
   macdCfg.colorSignal = document.getElementById('macd-color-signal').value;
   macdCfg.colorUp     = document.getElementById('macd-color-up').value;
   macdCfg.colorDown   = document.getElementById('macd-color-down').value;
+  macdCfg.height      = parseInt(document.getElementById('macd-height-range').value) || 160;
+  // 应用高度
+  const panel = document.getElementById('macd-panel');
+  panel.style.height = macdCfg.height + 'px';
   destroyMacdChart();
-  document.getElementById('macd-panel').classList.add('hidden');
+  panel.classList.add('hidden');
   if (!macdCfg.enabled) { macdCfg.enabled = true; document.getElementById('btn-macd').classList.add('ind-on'); }
   renderAllIndicators();
   saveConfig();
