@@ -130,6 +130,24 @@
   #main-chart-wrap { flex: 1; min-height: 0; }
   #macd-panel { height: 160px; flex-shrink: 0; border-top: 1px solid #30363d; position: relative; }
 
+  /* ── 左侧画线工具栏 ── */
+  #draw-toolbar {
+    width: 38px; flex-shrink: 0;
+    background: #161b22; border-right: 1px solid #30363d;
+    display: flex; flex-direction: column;
+    align-items: center; padding: 8px 0; gap: 4px;
+  }
+  #draw-toolbar button {
+    width: 28px; height: 28px;
+    border: 1px solid #30363d; border-radius: 5px;
+    background: #21262d; color: #8b949e; font-size: 14px;
+    cursor: pointer; transition: all .15s;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0; line-height: 1;
+  }
+  #draw-toolbar button:hover  { border-color: #58a6ff; color: #58a6ff; }
+  #draw-toolbar button.ind-on { background: #26a641; border-color: #26a641; color: #fff; }
+
   #macd-panel.hidden { display: none; }
   .modal-overlay {
     position: fixed; inset: 0; background: rgba(0,0,0,.6);
@@ -504,7 +522,6 @@
     <button id="btn-bb"   onclick="toggleBB()">BB</button>
     <button id="btn-macd" onclick="toggleMACD()">MACD</button>
     <button id="btn-div"  onclick="toggleDivergence()" title="MACD能量柱背离标记">背离</button>
-    <button id="btn-draw" onclick="toggleDrawMode()" title="绘制趋势线">📏</button>
     <button onclick="openModal('ma')" style="display:none" id="btn-settings">⚙</button>
   </div>
 
@@ -513,6 +530,10 @@
 </header>
 
 <div id="main-body">
+<!-- ── 左侧画线工具栏 ── -->
+<div id="draw-toolbar">
+  <button id="btn-draw" onclick="toggleDrawMode()" title="绘制线段（每次点击画一条）">📏</button>
+</div>
 <div id="content-area">
 
 <div id="charts-wrap">
