@@ -836,9 +836,15 @@ let macdChart = null, macdLineSeries = null, signalLineSeries = null, histSeries
 // ── 趋势线配置 ────────────────────────────────
 let drawMode = false;              // 绘制模式开关
 let drawingLine = null;            // 正在绘制的线段
-let trendLines = [];               // 已保存的趋势线 [{id, symbol, interval, p1: {time, price}, p2: {time, price}, series}]
+let previewSeries = null;           // 预览线段
+let trendLines = [];               // 已保存的趋势线 [{id, symbol, interval, p1: {time, price}, p2: {time, price}, series, markers}]
 let nextLineId = 1;                // 下一个线段ID
+let hoveredLineId = null;          // 当前悬停的线段ID
+let draggingLineId = null;         // 当前拖拽的线段ID
+let draggingPoint = null;          // 拖拽的点 'p1' 或 'p2'
+let lastClickTime = 0;             // 用于检测双击
 const DRAWING_KEY = 'tradfi_trendlines';
+const DOUBLE_CLICK_DELAY = 300;    // 双击检测延迟(ms)
 
 // ════════════════════════════════════════════
 //  主图表
@@ -861,6 +867,7 @@ const candleSeries = mainChart.addCandlestickSeries({
 });
 
 mainChart.subscribeClick(handleChartClick);
+mainChart.subscribeCrosshairMove(handleCrosshairMove);
 
 // ════════════════════════════════════════════
 //  MACD 子图
@@ -1183,7 +1190,7 @@ function deleteTrendLine(id) {
 }
 
 function handleChartClick(param) {
-  if (!drawMode || !param.time) return;
+  if (!param.time) return;
   
   const time = param.time;
   let price = null;
@@ -1204,31 +1211,229 @@ function handleChartClick(param) {
   
   if (price === null || isNaN(price)) return;
   
-  if (!drawingLine) {
-    drawingLine = { p1: { time, price }, p2: null };
+  const now = Date.now();
+  const isDoubleClick = (now - lastClickTime) < DOUBLE_CLICK_DELAY;
+  lastClickTime = now;
+  
+  if (drawMode) {
+    if (!drawingLine) {
+      drawingLine = { p1: { time, price }, p2: null };
+      if (!previewSeries) {
+        previewSeries = mainChart.addLineSeries({
+          color: '#ffeb3b',
+          lineWidth: 1,
+          lineStyle: LightweightCharts.LineStyle.Dashed,
+          priceLineVisible: false,
+          lastValueVisible: false
+        });
+      }
+    } else {
+      drawingLine.p2 = { time, price };
+      createTrendLine(drawingLine.p1, drawingLine.p2);
+      if (previewSeries) {
+        previewSeries.setData([]);
+      }
+      drawingLine = null;
+    }
   } else {
-    drawingLine.p2 = { time, price };
-    const series = mainChart.addLineSeries({
-      color: '#ffeb3b',
-      lineWidth: 2,
-      priceLineVisible: false,
-      lastValueVisible: false
-    });
-    series.setData([
-      { time: drawingLine.p1.time, value: drawingLine.p1.price },
-      { time: drawingLine.p2.time, value: drawingLine.p2.price }
-    ]);
-    trendLines.push({
-      id: nextLineId++,
-      symbol: currentSymbol,
-      interval: currentInterval,
-      p1: drawingLine.p1,
-      p2: drawingLine.p2,
-      series
-    });
-    saveTrendLines();
-    drawingLine = null;
+    if (draggingLineId !== null) {
+      const line = trendLines.find(l => l.id === draggingLineId);
+      if (line) {
+        if (draggingPoint === 'p1') {
+          line.p1 = { time, price };
+        } else if (draggingPoint === 'p2') {
+          line.p2 = { time, price };
+        }
+        line.series.setData([
+          { time: line.p1.time, value: line.p1.price },
+          { time: line.p2.time, value: line.p2.price }
+        ]);
+        saveTrendLines();
+      }
+      draggingLineId = null;
+      draggingPoint = null;
+    } else if (isDoubleClick && hoveredLineId !== null) {
+      deleteTrendLine(hoveredLineId);
+      hoveredLineId = null;
+    } else if (!isDoubleClick && hoveredLineId !== null) {
+      checkDragStart(param);
+    }
   }
+}
+
+function handleCrosshairMove(param) {
+  if (!param.time) return;
+  
+  if (drawMode && drawingLine) {
+    let price = null;
+    if (param.seriesData && param.seriesData.size > 0) {
+      const firstSeries = param.seriesData.values().next().value;
+      if (firstSeries && firstSeries.value !== undefined) {
+        price = firstSeries.value;
+      }
+    }
+    
+    if (!price) {
+      const candle = currentCandles.find(c => c.time === param.time);
+      if (candle) {
+        price = (candle.high + candle.low) / 2;
+      }
+    }
+    
+    if (price !== null && !isNaN(price) && previewSeries) {
+      previewSeries.setData([
+        { time: drawingLine.p1.time, value: drawingLine.p1.price },
+        { time: param.time, value: price }
+      ]);
+    }
+  } else if (draggingLineId !== null) {
+    let price = null;
+    if (param.seriesData && param.seriesData.size > 0) {
+      const firstSeries = param.seriesData.values().next().value;
+      if (firstSeries && firstSeries.value !== undefined) {
+        price = firstSeries.value;
+      }
+    }
+    
+    if (!price) {
+      const candle = currentCandles.find(c => c.time === param.time);
+      if (candle) {
+        price = (candle.high + candle.low) / 2;
+      }
+    }
+    
+    if (price !== null && !isNaN(price)) {
+      const line = trendLines.find(l => l.id === draggingLineId);
+      if (line) {
+        if (draggingPoint === 'p1') {
+          line.p1 = { time: param.time, price };
+        } else if (draggingPoint === 'p2') {
+          line.p2 = { time: param.time, price };
+        }
+        line.series.setData([
+          { time: line.p1.time, value: line.p1.price },
+          { time: line.p2.time, value: line.p2.price }
+        ]);
+      }
+    }
+  } else {
+    checkHover(param.time);
+  }
+}
+
+function checkHover(time) {
+  let newHoveredId = null;
+  const threshold = 86400000;
+  
+  for (const line of trendLines) {
+    const t1 = line.p1.time;
+    const t2 = line.p2.time;
+    
+    if (time >= Math.min(t1, t2) && time <= Math.max(t1, t2)) {
+      const ratio = (time - t1) / (t2 - t1);
+      const linePrice = line.p1.price + ratio * (line.p2.price - line.p1.price);
+      
+      let currentPrice = null;
+      if (currentCandles.length > 0) {
+        const candle = currentCandles.find(c => c.time === time);
+        if (candle) {
+          currentPrice = (candle.high + candle.low) / 2;
+        }
+      }
+      
+      if (currentPrice !== null && Math.abs(currentPrice - linePrice) < 10) {
+        newHoveredId = line.id;
+        break;
+      }
+    }
+  }
+  
+  if (newHoveredId !== hoveredLineId) {
+    if (hoveredLineId !== null) {
+      const oldLine = trendLines.find(l => l.id === hoveredLineId);
+      if (oldLine && oldLine.series) {
+        oldLine.series.applyOptions({ color: '#ffeb3b', lineWidth: 2 });
+      }
+    }
+    
+    hoveredLineId = newHoveredId;
+    
+    if (hoveredLineId !== null) {
+      const newLine = trendLines.find(l => l.id === hoveredLineId);
+      if (newLine && newLine.series) {
+        newLine.series.applyOptions({ color: '#ffffff', lineWidth: 3 });
+      }
+    }
+  }
+}
+
+function checkDragStart(param) {
+  if (!param.time) return false;
+  
+  const time = param.time;
+  let price = null;
+  
+  if (param.seriesData && param.seriesData.size > 0) {
+    const firstSeries = param.seriesData.values().next().value;
+    if (firstSeries && firstSeries.value !== undefined) {
+      price = firstSeries.value;
+    }
+  }
+  
+  if (!price) {
+    const candle = currentCandles.find(c => c.time === time);
+    if (candle) {
+      price = (candle.high + candle.low) / 2;
+    }
+  }
+  
+  if (price === null || isNaN(price)) return false;
+  
+  const line = trendLines.find(l => l.id === hoveredLineId);
+  if (!line) return false;
+  
+  const timeThreshold = 86400000;
+  const priceThreshold = 50;
+  
+  if (Math.abs(time - line.p1.time) < timeThreshold && Math.abs(price - line.p1.price) < priceThreshold) {
+    draggingLineId = line.id;
+    draggingPoint = 'p1';
+    return true;
+  }
+  
+  if (Math.abs(time - line.p2.time) < timeThreshold && Math.abs(price - line.p2.price) < priceThreshold) {
+    draggingLineId = line.id;
+    draggingPoint = 'p2';
+    return true;
+  }
+  
+  return false;
+}
+
+function createTrendLine(p1, p2) {
+  const series = mainChart.addLineSeries({
+    color: '#ffeb3b',
+    lineWidth: 2,
+    priceLineVisible: false,
+    lastValueVisible: false
+  });
+  series.setData([
+    { time: p1.time, value: p1.price },
+    { time: p2.time, value: p2.price }
+  ]);
+  
+  const line = {
+    id: nextLineId++,
+    symbol: currentSymbol,
+    interval: currentInterval,
+    p1: { ...p1 },
+    p2: { ...p2 },
+    series
+  };
+  
+  trendLines.push(line);
+  saveTrendLines();
+  return line;
 }
 
 // ════════════════════════════════════════════
@@ -1377,8 +1582,11 @@ function toggleDrawMode() {
   drawMode = !drawMode;
   const btn = document.getElementById('btn-draw');
   btn.classList.toggle('ind-on', drawMode);
-  if (!drawMode && drawingLine) {
+  if (!drawMode) {
     drawingLine = null;
+    if (previewSeries) {
+      previewSeries.setData([]);
+    }
   }
 }
 
@@ -1417,14 +1625,7 @@ function loadTrendLinesForCurrent() {
     nextLineId = maxId + 1;
     saved.forEach(l => {
       if (l.symbol === currentSymbol && l.interval === currentInterval) {
-        const series = mainChart.addLineSeries({
-          color: '#ffeb3b',
-          lineWidth: 2,
-          priceLineVisible: false,
-          lastValueVisible: false
-        });
-        series.setData([{ time: l.p1.time, value: l.p1.price }, { time: l.p2.time, value: l.p2.price }]);
-        trendLines.push({ ...l, series });
+        createTrendLine(l.p1, l.p2);
       }
     });
   } catch(_) {}
