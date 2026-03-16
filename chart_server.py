@@ -861,9 +861,8 @@ def api_monthly_pnl_detail(request: Request):
         account_data = get_mt5_account_data(*creds)
         balance = float(account_data.get("balance", 0))
         
-        # 获取本月持仓历史（只到今天，不包括未来日期）
-        today_ts = int(datetime(today.year, today.month, today.day).timestamp())
-        records = get_position_history(*creds, month_from_ts, today_ts)
+        # 获取本月持仓历史
+        records = get_position_history(*creds, month_from_ts, now_ts)
     except Exception as e:
         raise HTTPException(502, detail=str(e))
     
@@ -874,6 +873,8 @@ def api_monthly_pnl_detail(request: Request):
     for r in records:
         t   = int(r.get("time_close") or 0)
         pnl = float(r.get("realized_pnl") or 0)
+        if t < month_from_ts:
+            continue
         month_pnl += pnl
         
         # 获取日期（1-31）
