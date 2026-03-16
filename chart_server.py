@@ -203,6 +203,51 @@ def get_position_history(api_key: str, api_secret: str,
     return resp.json().get("data", {}).get("list", [])
 
 
+def place_order(api_key: str, api_secret: str,
+                price: str, price_type: str, side: int,
+                symbol: str, volume: str,
+                price_tp: str = None, price_sl: str = None) -> dict:
+    """提交订单到Gate.io TradFi API
+    
+    Args:
+        api_key: Gate.io API密钥
+        api_secret: Gate.io API密钥
+        price: 价格（必填）
+        price_type: 价格类型，如"trigger"（必填）
+        side: 方向，1=买入，2=卖出（必填）
+        symbol: 交易对，如"EURUSD"（必填）
+        volume: 数量/手数（必填）
+        price_tp: 止盈价格（可选）
+        price_sl: 止损价格（可选）
+    
+    Returns:
+        dict: API响应结果
+    """
+    url_path = "/api/v4/tradfi/orders"
+    
+    # 构建请求体
+    body = {
+        "price": price,
+        "price_type": price_type,
+        "side": side,
+        "symbol": symbol,
+        "volume": volume,
+    }
+    
+    # 添加可选参数
+    if price_tp:
+        body["price_tp"] = price_tp
+    if price_sl:
+        body["price_sl"] = price_sl
+    
+    body_str = json.dumps(body)
+    headers = gen_sign(api_key, api_secret, "POST", url_path, "", body_str)
+    
+    resp = requests.post(HOST + url_path, headers=headers, data=body_str)
+    resp.raise_for_status()
+    return resp.json()
+
+
 # ── 实时 K 线 WebSocket 管理器 ────────────────
 class _KlineWSManager:
     """管理浏览器 WS 订阅与 Gate.io 上游 WS 连接（每个 symbol+interval 维持一条上游连接）"""
@@ -663,6 +708,54 @@ async def api_close_position(position_id: int, request: Request):
         data = close_position(*creds, position_id, body)
     except Exception as e:
         raise HTTPException(502, detail=str(e))
+    return JSONResponse(data)
+
+
+# ── 下单接口（需登录）──────────────
+@app.post("/api/orders")
+async def api_place_order(request: Request):
+    """提交市价单或条件单
+    
+    请求体:
+    {
+        "price": "0.9",           # 价格（必填）
+        "price_type": "market",   # 价格类型：market=市价单，trigger=条件单（必填）
+        "side": 2,                # 方向：1=卖，2=买（必填）
+        "symbol": "EURUSD",       # 交易对（必填）
+        "volume": "10",           # 数量/手数（必填）
+        "price_tp": "1.5",        # 止盈价格（可选）
+        "price_sl": "0.8"         # 止损价格（可选）
+    }
+    """
+    creds = _get_creds(request)
+    if not creds:
+        raise HTTPException(401, detail="未登录")
+    
+    try:
+        body = await request.json()
+        
+        # 验证必填字段
+        required_fields = ["price", "price_type", "side", "symbol", "volume"]
+        for field in required_fields:
+            if field not in body:
+                raise HTTPException(400, detail=f"缺少必填字段: {field}")
+        
+        # 调用Gate.io API
+        data = place_order(
+            *creds,
+            price=body["price"],
+            price_type=body["price_type"],
+            side=body["side"],
+            symbol=body["symbol"],
+            volume=body["volume"],
+            price_tp=body.get("price_tp"),
+            price_sl=body.get("price_sl")
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, detail=str(e))
+    
     return JSONResponse(data)
 
 

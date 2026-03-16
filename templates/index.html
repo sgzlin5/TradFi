@@ -1468,54 +1468,84 @@ function showMarketOrderConfirm(orderData) {
   }
 }
 
-// 执行市价下单（前端占位函数）
-function executeMarketOrder(orderData) {
-  // TODO: 后端接口待实现
-  // 
-  // 后端实现要求：
-  // 1. 服务器端验证：所有参数必须在服务器端再次验证，包括：
-  //    - 品种有效性
-  //    - 方向（buy/sell）
-  //    - 输入类型（lots/cost）
-  //    - 数值范围（最小/最大手数、最小/最大成本）
-  //    - 价格有效性
-  // 2. 用户认证/授权：
-  //    - 验证用户身份和权限
-  //    - 检查账户余额是否充足
-  // 3. 速率限制：
-  //    - 防止订单提交过快
-  //    - 防止恶意请求
-  // 4. 事务原子性：
-  //    - 确保订单提交和账户余额更新的原子性
-  //    - 处理并发请求
-  // 5. 错误处理：
-  //    - 返回详细的错误信息
-  //    - 记录错误日志
-  // 6. 安全性：
-  //    - 使用HTTPS
-  //    - 防止CSRF攻击
-  //    - 防止SQL注入
-  //
-  // 建议的API端点：POST /api/orders/market
-  // 请求体格式：
-  // {
-  //   "symbol": "XAUUSD",
-  //   "direction": "buy",
-  //   "inputType": "lots",
-  //   "value": 0.1,
-  //   "price": 2345.67,
-  //   "orderType": "market"
-  // }
-  console.log('市价下单请求:', orderData);
-  
-  const directionText = orderData.direction === 'buy' ? '买入' : '卖出';
-  const inputTypeText = orderData.inputType === 'lots' ? '手数' : '成本金额';
-  
-  alert(`市价${directionText}订单已提交（后端接口待实现）\n\n` +
-        `品种: ${orderData.symbol}\n` +
-        `方向: ${directionText}\n` +
-        `${inputTypeText}: ${orderData.value}\n` +
-        `价格: ${orderData.price}`);
+// 执行市价下单
+async function executeMarketOrder(orderData) {
+  try {
+    console.log('市价下单请求:', orderData);
+    
+    const directionText = orderData.direction === 'buy' ? '买入' : '卖出';
+    const inputTypeText = orderData.inputType === 'lots' ? '手数' : '成本金额';
+    
+    // 转换为后端API所需的格式
+    // side: 1=卖，2=买
+    const side = orderData.direction === 'buy' ? 2 : 1;
+    
+    // 如果输入的是成本金额，需要换算为手数
+    // 手数 = (成本金额 * 杠杆倍数) / (合约规格 * 市价)
+    // 合约规格通常为100，杠杆倍数默认500
+    // volume的最小单位是0.01
+    let volume;
+    if (orderData.inputType === 'cost') {
+      const contractSize = 100;  // 合约规格
+      const leverage = 500;      // 杠杆倍数
+      const minVolume = 0.01;   // 最小手数单位
+      
+      let calculatedVolume = (orderData.value * leverage) / (contractSize * orderData.price);
+      
+      // 四舍五入到小数点后2位，并确保至少为0.01
+      calculatedVolume = Math.round(calculatedVolume * 100) / 100;
+      if (calculatedVolume < minVolume) {
+        calculatedVolume = minVolume;
+      }
+      
+      volume = calculatedVolume.toFixed(2);
+      console.log(`成本金额 ${orderData.value} 换算为手数: ${volume} (公式: (${orderData.value} * ${leverage}) / (${contractSize} * ${orderData.price}))`);
+    } else {
+      volume = String(orderData.value);
+    }
+    
+    // price_type: market表示市价单
+    const requestBody = {
+      price: String(orderData.price),
+      price_type: 'market',
+      side: side,
+      symbol: orderData.symbol,
+      volume: volume
+    };
+    
+    console.log('发送到后端的请求体:', requestBody);
+    
+    // 调用后端API
+    const response = await fetch('/api/orders', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(requestBody)
+    });
+    
+    const result = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(result.detail || '订单提交失败');
+    }
+    
+    // 成功提示
+    const orderId = result.data?.id || '未知';
+    alert(`市价${directionText}订单已成功提交！\n\n` +
+          `品种: ${orderData.symbol}\n` +
+          `方向: ${directionText}\n` +
+          `${inputTypeText}: ${orderData.value}\n` +
+          `手数: ${volume}\n` +
+          `价格: ${orderData.price}\n` +
+          `订单ID: ${orderId}`);
+    
+    console.log('订单提交成功:', result);
+    
+  } catch (error) {
+    console.error('订单提交失败:', error);
+    alert(`订单提交失败: ${error.message}`);
+  }
 }
 
 // 在品种切换时更新市价下单品种
