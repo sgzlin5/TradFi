@@ -857,9 +857,10 @@ def api_monthly_pnl_detail(request: Request):
     days_in_month = calendar.monthrange(today.year, today.month)[1]
     
     try:
-        # 获取账户余额
-        account_data = get_mt5_account_data(*creds)
-        balance = float(account_data.get("balance", 0))
+        # 获取账户余额（与前端 loadAssets 取值路径保持一致）
+        assets_data = get_assets_data(*creds)
+        _inner  = assets_data.get("data") or assets_data
+        balance = float(_inner.get("balance") or _inner.get("equity") or 0)
         
         # 获取本月持仓历史
         records = get_position_history(*creds, month_from_ts, now_ts)
