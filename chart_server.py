@@ -861,13 +861,14 @@ def api_monthly_pnl_detail(request: Request):
         account_data = get_mt5_account_data(*creds)
         balance = float(account_data.get("balance", 0))
         
-        # 获取本月持仓历史
-        records = get_position_history(*creds, month_from_ts, now_ts)
+        # 获取本月持仓历史（只到今天，不包括未来日期）
+        today_ts = int(datetime(today.year, today.month, today.day).timestamp())
+        records = get_position_history(*creds, month_from_ts, today_ts)
     except Exception as e:
         raise HTTPException(502, detail=str(e))
     
     # 按日期聚合盈亏数据
-    day_pnl: dict[int, dict] = {}
+    day_pnl: dict[int, float] = {}
     month_pnl: float = 0.0
     
     for r in records:
@@ -877,13 +878,15 @@ def api_monthly_pnl_detail(request: Request):
         
         # 获取日期（1-31）
         day = date.fromtimestamp(t).day
-        if day not in day_pnl:
-            day_pnl[day] = {"pnl": 0.0, "rate": 0.0}
-        day_pnl[day]["pnl"] += pnl
-        
-        # 计算收益率（基于账户余额）
-        if balance > 0:
-            day_pnl[day]["rate"] = (day_pnl[day]["pnl"] / balance) * 100
+        day_pnl[day] = day_pnl.get(day, 0.0) + pnl
+    
+    # 计算收益率（基于账户余额）
+    if balance > 0:
+        for day in day_pnl:
+            day_pnl[day] = {"pnl": round(day_pnl[day], 2), "rate": round(day_pnl[day] / balance * 100, 2)}
+    else:
+        for day in day_pnl:
+            day_pnl[day] = {"pnl": round(day_pnl[day], 2), "rate": 0.0}
     
     # 确保所有日期都有数据（无交易的日期显示为0）
     for day in range(1, days_in_month + 1):
