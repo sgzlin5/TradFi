@@ -486,6 +486,207 @@
   .btn-diary-copy:hover { border-color: #58a6ff; color: #58a6ff; }
   .btn-diary-dl { background: #1f6feb; border: none; color: #fff; }
   .btn-diary-dl:hover { background: #388bfd; }
+
+  /* ── 市价下单面板 ── */
+  #market-order-panel {
+    flex-shrink: 0;
+    background: #161b22;
+    border-top: 1px solid #30363d;
+    border-bottom: 1px solid #30363d;
+    display: flex;
+    flex-direction: column;
+  }
+
+  #market-order-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    background: #1c2128;
+    border-bottom: 1px solid #30363d;
+  }
+
+  #market-order-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #e6edf3;
+  }
+
+  .market-order-symbol {
+    font-size: 11px;
+    color: #8b949e;
+    background: #21262d;
+    padding: 2px 6px;
+    border-radius: 3px;
+  }
+
+  #market-order-body {
+    padding: 10px 14px;
+  }
+
+  .market-order-row {
+    display: flex;
+    gap: 8px;
+    align-items: stretch;
+    margin-bottom: 8px;
+  }
+
+  /* 市价买入按钮 - 绿色 */
+  .btn-market-buy {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    padding: 8px 6px;
+    background: #238636;
+    border: 1px solid #2ea043;
+    border-radius: 6px;
+    color: #fff;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-size: 11px;
+  }
+
+  .btn-market-buy:hover {
+    background: #2ea043;
+    border-color: #3fb950;
+  }
+
+  .btn-market-buy:active {
+    background: #1a7f37;
+  }
+
+  .btn-market-buy .btn-label {
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .btn-market-buy .btn-price {
+    font-size: 14px;
+    font-weight: 700;
+    color: #fff;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 市价卖出按钮 - 红色 */
+  .btn-market-sell {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    padding: 8px 6px;
+    background: #da3633;
+    border: 1px solid #f85149;
+    border-radius: 6px;
+    color: #fff;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-size: 11px;
+  }
+
+  .btn-market-sell:hover {
+    background: #f85149;
+    border-color: #ff7b72;
+  }
+
+  .btn-market-sell:active {
+    background: #b62324;
+  }
+
+  .btn-market-sell .btn-label {
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .btn-market-sell .btn-price {
+    font-size: 14px;
+    font-weight: 700;
+    color: #fff;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 输入组 */
+  .market-input-group {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  /* 输入类型下拉框 */
+  .market-input-type {
+    width: 100%;
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    color: #e6edf3;
+    padding: 4px 8px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .market-input-type:hover {
+    border-color: #58a6ff;
+  }
+
+  .market-input-type:focus {
+    outline: 1px solid #58a6ff;
+    border-color: #58a6ff;
+  }
+
+  /* 成本/手数输入框 */
+  .market-cost-input {
+    width: 100%;
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    color: #e6edf3;
+    padding: 6px 8px;
+    font-size: 12px;
+    text-align: center;
+    transition: all 0.15s;
+  }
+
+  .market-cost-input:focus {
+    outline: 1px solid #58a6ff;
+    border-color: #58a6ff;
+  }
+
+  .market-cost-input::placeholder {
+    color: #6e7681;
+    font-size: 11px;
+  }
+
+  /* 选项区域 */
+  .market-order-options {
+    display: flex;
+    justify-content: center;
+    padding-top: 4px;
+  }
+
+  .market-order-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: #8b949e;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .market-order-checkbox input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+    accent-color: #1f6feb;
+  }
+
+  .market-order-checkbox:hover {
+    color: #e6edf3;
+  }
 </style>
 </head>
 <body>
@@ -525,6 +726,40 @@
   </div>
   <div id="main-chart-wrap"></div>
   <div id="macd-panel" class="hidden"></div>
+</div>
+
+<!-- ── 市价下单面板 ── -->
+<div id="market-order-panel">
+  <div id="market-order-header">
+    <span id="market-order-title">市价下单</span>
+    <span id="market-order-symbol" class="market-order-symbol">XAUUSD</span>
+  </div>
+  <div id="market-order-body">
+    <div class="market-order-row">
+      <button class="btn-market-buy" id="btn-market-buy" onclick="placeMarketOrder('buy')">
+        <span class="btn-label">市价买入</span>
+        <span class="btn-price" id="market-buy-price">--</span>
+      </button>
+      <div class="market-input-group">
+        <select id="market-input-type" class="market-input-type" onchange="updateInputPlaceholder()">
+          <option value="lots">手数</option>
+          <option value="cost">成本金额</option>
+        </select>
+        <input type="number" id="market-cost-input" class="market-cost-input"
+               placeholder="手数" min="0" step="any">
+      </div>
+      <button class="btn-market-sell" id="btn-market-sell" onclick="placeMarketOrder('sell')">
+        <span class="btn-label">市价卖出</span>
+        <span class="btn-price" id="market-sell-price">--</span>
+      </button>
+    </div>
+    <div class="market-order-options">
+      <label class="market-order-checkbox">
+        <input type="checkbox" id="market-confirm-checkbox" checked>
+        <span>下单前二次确认</span>
+      </label>
+    </div>
+  </div>
 </div>
 
 <!-- ── 头寸面板 ── -->
@@ -1102,6 +1337,196 @@ function resize() {
 }
 
 // ════════════════════════════════════════════
+//  市价下单功能
+// ════════════════════════════════════════════
+// 更新市价下单按钮上的价格和品种
+function updateMarketOrderInfo(askPrice, bidPrice, symbol) {
+  const buyPriceEl = document.getElementById('market-buy-price');
+  const sellPriceEl = document.getElementById('market-sell-price');
+  const symbolEl = document.getElementById('market-order-symbol');
+  
+  // 检查DOM元素是否存在
+  if (!buyPriceEl || !sellPriceEl || !symbolEl) {
+    console.warn('市价下单面板DOM元素未找到');
+    return;
+  }
+  
+  if (askPrice) {
+    buyPriceEl.textContent = formatPrice(askPrice);
+  }
+  if (bidPrice) {
+    sellPriceEl.textContent = formatPrice(bidPrice);
+  }
+  if (symbol) {
+    symbolEl.textContent = symbol;
+  }
+}
+
+// 更新输入框占位符
+function updateInputPlaceholder() {
+  const inputType = document.getElementById('market-input-type').value;
+  const inputEl = document.getElementById('market-cost-input');
+  
+  if (inputType === 'lots') {
+    inputEl.placeholder = '手数';
+  } else {
+    inputEl.placeholder = '成本金额';
+  }
+}
+
+// 格式化价格显示
+function formatPrice(price) {
+  if (!price) return '--';
+  const numPrice = parseFloat(price);
+  if (isNaN(numPrice)) return '--';
+  return numPrice.toFixed(_tickerDigits);
+}
+
+// 市价下单主函数
+function placeMarketOrder(direction) {
+  const inputType = document.getElementById('market-input-type').value;
+  const costInput = document.getElementById('market-cost-input');
+  const cost = parseFloat(costInput.value);
+  const confirmCheckbox = document.getElementById('market-confirm-checkbox');
+  
+  // 验证输入
+  if (isNaN(cost) || cost <= 0) {
+    alert(`请输入有效的${inputType === 'lots' ? '手数' : '成本金额'}`);
+    return;
+  }
+  
+  // 交易特定验证
+  if (inputType === 'lots') {
+    // 手数验证
+    if (cost < 0.01) {
+      alert('最小手数为 0.01');
+      return;
+    }
+    if (cost > 100) {
+      alert('最大手数为 100');
+      return;
+    }
+  } else {
+    // 成本金额验证
+    if (cost < 10) {
+      alert('最小成本金额为 $10');
+      return;
+    }
+    if (cost > 100000) {
+      alert('最大成本金额为 $100,000');
+      return;
+    }
+  }
+  
+  // 获取并验证价格
+  const askPriceStr = document.getElementById('market-buy-price').textContent;
+  const bidPriceStr = document.getElementById('market-sell-price').textContent;
+  const askPrice = parseFloat(askPriceStr);
+  const bidPrice = parseFloat(bidPriceStr);
+  const price = direction === 'buy' ? askPrice : bidPrice;
+  
+  // 验证价格数据
+  if (isNaN(price) || price <= 0) {
+    alert('价格数据无效，请稍后重试');
+    return;
+  }
+  
+  // 构造订单数据
+  const orderData = {
+    symbol: currentSymbol,
+    direction: direction, // 'buy' or 'sell'
+    inputType: inputType, // 'lots' or 'cost'
+    value: cost,
+    price: price,
+    orderType: 'market'
+  };
+  
+  // 检查是否需要二次确认
+  if (confirmCheckbox.checked) {
+    showMarketOrderConfirm(orderData);
+  } else {
+    executeMarketOrder(orderData);
+  }
+}
+
+// 显示市价下单确认弹窗
+function showMarketOrderConfirm(orderData) {
+  const directionText = orderData.direction === 'buy' ? '买入' : '卖出';
+  const inputTypeText = orderData.inputType === 'lots' ? '手数' : '成本金额';
+  const priceText = orderData.price;
+  const valueText = orderData.value;
+  
+  const confirmMsg =
+    `确认市价${directionText}？\n\n` +
+    `品种: ${orderData.symbol}\n` +
+    `方向: ${directionText}\n` +
+    `${inputTypeText}: ${valueText}\n` +
+    `价格: ${priceText}`;
+  
+  if (confirm(confirmMsg)) {
+    executeMarketOrder(orderData);
+  }
+}
+
+// 执行市价下单（前端占位函数）
+function executeMarketOrder(orderData) {
+  // TODO: 后端接口待实现
+  // 
+  // 后端实现要求：
+  // 1. 服务器端验证：所有参数必须在服务器端再次验证，包括：
+  //    - 品种有效性
+  //    - 方向（buy/sell）
+  //    - 输入类型（lots/cost）
+  //    - 数值范围（最小/最大手数、最小/最大成本）
+  //    - 价格有效性
+  // 2. 用户认证/授权：
+  //    - 验证用户身份和权限
+  //    - 检查账户余额是否充足
+  // 3. 速率限制：
+  //    - 防止订单提交过快
+  //    - 防止恶意请求
+  // 4. 事务原子性：
+  //    - 确保订单提交和账户余额更新的原子性
+  //    - 处理并发请求
+  // 5. 错误处理：
+  //    - 返回详细的错误信息
+  //    - 记录错误日志
+  // 6. 安全性：
+  //    - 使用HTTPS
+  //    - 防止CSRF攻击
+  //    - 防止SQL注入
+  //
+  // 建议的API端点：POST /api/orders/market
+  // 请求体格式：
+  // {
+  //   "symbol": "XAUUSD",
+  //   "direction": "buy",
+  //   "inputType": "lots",
+  //   "value": 0.1,
+  //   "price": 2345.67,
+  //   "orderType": "market"
+  // }
+  console.log('市价下单请求:', orderData);
+  
+  const directionText = orderData.direction === 'buy' ? '买入' : '卖出';
+  const inputTypeText = orderData.inputType === 'lots' ? '手数' : '成本金额';
+  
+  alert(`市价${directionText}订单已提交（后端接口待实现）\n\n` +
+        `品种: ${orderData.symbol}\n` +
+        `方向: ${directionText}\n` +
+        `${inputTypeText}: ${orderData.value}\n` +
+        `价格: ${orderData.price}`);
+}
+
+// 在品种切换时更新市价下单品种
+function updateMarketOrderSymbol() {
+  const symbolEl = document.getElementById('market-order-symbol');
+  if (symbolEl) {
+    symbolEl.textContent = currentSymbol;
+  }
+}
+
+// ════════════════════════════════════════════
 //  配置持久化（localStorage）
 // ════════════════════════════════════════════
 const CFG_KEY = 'tradfi_indicator_cfg';
@@ -1461,6 +1886,8 @@ function connectOrderBookWS(symbol) {
     document.getElementById('ob-ask').textContent    = ask.toFixed(digits);
     document.getElementById('ob-bid').textContent    = bid.toFixed(digits);
     document.getElementById('ob-spread').textContent = spread;
+    // 更新市价下单按钮上的价格（传递数字，由formatPrice统一格式化）
+    updateMarketOrderInfo(ask, bid, symbol);
   };
 
   ws.onclose = (e) => {
@@ -2266,6 +2693,8 @@ SYMBOLS.forEach(sym => {
     loadKlines(currentInterval);
     connectOrderBookWS(sym);
     connectTickerWS(sym);
+    // 更新市价下单面板上的品种
+    updateMarketOrderSymbol();
   });
   symbolBar.appendChild(btn);
 });
