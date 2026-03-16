@@ -770,8 +770,8 @@
     <button id="btn-close-all"    onclick="openCloseAllConfirm(event)"    title="平掉所有头寸">一键平仓</button>
     <button id="btn-close-profit" onclick="openCloseProfitConfirm(event)" title="平掉所有盈利头寸">平盈利</button>
     <button id="btn-close-loss"   onclick="openCloseLossConfirm(event)"   title="平掉所有亏损头寸">平亏损</button>
-    <button id="btn-tpsl-long"  onclick="openBatchTPSLModal('long')"  title="批量设置多仓止盈止损">多仓 TP/SL</button>
-    <button id="btn-tpsl-short" onclick="openBatchTPSLModal('short')" title="批量设置空仓止盈止损">空仓 TP/SL</button>
+    <button id="btn-tpsl-long"  onclick="event.stopPropagation(); openBatchTPSLModal('long')"  title="批量设置多仓止盈止损">多仓 TP/SL</button>
+    <button id="btn-tpsl-short" onclick="event.stopPropagation(); openBatchTPSLModal('short')" title="批量设置空仓止盈止损">空仓 TP/SL</button>
     <span id="pos-toggle">▾</span>
   </div>
   <div id="pos-body">
