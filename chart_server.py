@@ -63,6 +63,127 @@ _lockout_until:  float = 0.0
 MAX_FAILURES = 3
 LOCKOUT_SECS = 86400
 
+# 价格缓存：symbol -> {bid: float, ask: float, timestamp: float}
+_price_cache: Dict[str, Dict[str, float]] = {}
+
+
+# ── 价格缓存和盈亏计算工具函数 ───────────────────
+def _update_price_cache(symbol: str, bid: str, ask: str) -> None:
+    """更新价格缓存
+    
+    Args:
+        symbol: 交易对符号（如 EURUSD）
+        bid: 买一价
+        ask: 卖一价
+    """
+    try:
+        bid_float = float(bid) if bid else 0
+        ask_float = float(ask) if ask else 0
+        _price_cache[symbol] = {
+            "bid": bid_float,
+            "ask": ask_float,
+            "timestamp": time.time()
+        }
+    except Exception:
+        pass
+
+
+def _get_cached_price(symbol: str) -> Tuple[float, float]:
+    """从缓存获取价格
+    
+    Args:
+        symbol: 交易对符号
+    
+    Returns:
+        (bid, ask) 元组，如果获取失败返回 (0, 0)
+    """
+    price_info = _price_cache.get(symbol, {})
+    return float(price_info.get("bid", 0)), float(price_info.get("ask", 0))
+
+
+def _calculate_unrealized_pnl(position: dict, bid: float, ask: float) -> float:
+    """
+    计算未实现盈亏
+    
+    Args:
+        position: 持仓数据字典
+        bid: 买一价
+        ask: 卖一价
+    
+    Returns:
+        float: 未实现盈亏
+    """
+    try:
+        position_dir = position.get("position_dir", "").lower()
+        open_price = float(position.get("price_open", 0))
+        volume = float(position.get("volume", 0))
+        
+        if volume == 0 or open_price == 0:
+            return 0.0
+        
+        # 根据方向选择当前价
+        # 多头持仓：使用 bid 价格（卖出价）
+        # 空头持仓：使用 ask 价格（买入价）
+        if position_dir == "long":
+            current_price = bid
+        elif position_dir == "short":
+            current_price = ask
+        else:
+            return 0.0
+        
+        if current_price == 0:
+            return 0.0
+        
+        # 计算盈亏: (当前价 - 开仓价) * 手数
+        pnl = (current_price - open_price) * volume
+        
+        # 如果是空头，盈亏方向相反
+        if position_dir == "short":
+            pnl = -pnl
+        
+        return round(pnl, 2)
+    except Exception:
+        return 0.0
+
+
+def _enhance_positions_data(positions_data: dict) -> dict:
+    """
+    增强持仓数据，添加 counterparty_price 和 unrealized_pnl
+    
+    Args:
+        positions_data: 原始持仓数据
+    
+    Returns:
+        dict: 增强后的持仓数据
+    """
+    if not positions_data or "data" not in positions_data:
+        return positions_data
+    
+    for position in positions_data.get("data", {}).get("list", []):
+        symbol = position.get("symbol", "")
+        position_dir = position.get("position_dir", "").lower()
+        
+        # 从价格缓存获取最新价格
+        bid, ask = _get_cached_price(symbol)
+        
+        # 设置 counterparty_price（当前对手方价格）
+        # 多头持仓：使用 bid（卖出到市场的价格）
+        # 空头持仓：使用 ask（从市场买入的价格）
+        if position_dir == "long":
+            counterparty_price = bid
+        elif position_dir == "short":
+            counterparty_price = ask
+        else:
+            counterparty_price = 0
+        
+        position["counterparty_price"] = counterparty_price
+        
+        # 计算 unrealized_pnl
+        unrealized_pnl = _calculate_unrealized_pnl(position, bid, ask)
+        position["unrealized_pnl"] = unrealized_pnl
+    
+    return positions_data
+
 
 # ── config.enc 解密 ───────────────────────────
 def _derive_key(password: str, salt: bytes) -> bytes:
@@ -393,9 +514,12 @@ class _PrivateWSManager:
                             # 获取最新的持仓数据并广播
                             try:
                                 positions_data = get_positions(key, secret)
+                                # 增强持仓数据：添加 counterparty_price 和 unrealized_pnl
+
+                                enhanced_positions = _enhance_positions_data(positions_data)
                                 await self._broadcast(api_key, {
                                     "type": "position",
-                                    "result": positions_data
+                                    "result": enhanced_positions
                                 })
                             except Exception as e:
                                 # 如果获取失败，广播原始数据
@@ -471,9 +595,13 @@ class _OrderBookWSManager:
                         if (data.get("channel") == "tradfi.order_book"
                                 and data.get("event") == "update"):
                             for r in data.get("result", []):
+                                bid = r.get("bid", "")
+                                ask = r.get("ask", "")
+                                # 更新价格缓存，用于持仓盈亏计算
+                                _update_price_cache(symbol, bid, ask)
                                 await self._broadcast(symbol, {
-                                    "bid": r.get("bid", ""),
-                                    "ask": r.get("ask", ""),
+                                    "bid": bid,
+                                    "ask": ask,
                                 })
             except asyncio.CancelledError:
                 return
