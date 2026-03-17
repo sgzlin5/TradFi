@@ -390,18 +390,25 @@ class _PrivateWSManager:
                         if event != "update":
                             continue
                         if ch == "tradfi.position":
-                            # 直接使用 WS 推送数据，无需额外 REST 请求
-                            # WS 推送字段 side: 1=short, 2=long；映射为前端 position_dir 字符串
-                            raw_list = data.get("result", [])
-                            if not isinstance(raw_list, list):
-                                raw_list = []
-                            for item in raw_list:
-                                if "position_dir" not in item:
-                                    item["position_dir"] = "long" if item.get("side") == 2 else "short"
-                            await self._broadcast(api_key, {
-                                "type": "position",
-                                "result": {"data": {"list": raw_list}},
-                            })
+                            # 在线程池中执行阻塞的同步 HTTP 请求，避免阻塞事件循环
+                            try:
+                                loop = asyncio.get_event_loop()
+                                positions_data = await loop.run_in_executor(
+                                    None, get_positions, key, secret
+                                )
+                                await self._broadcast(api_key, {
+                                    "type": "position",
+                                    "result": positions_data
+                                })
+                            except Exception:
+                                # 如果获取失败，将原始 WS 列表包装为 REST 兼容格式
+                                raw_list = data.get("result", [])
+                                if not isinstance(raw_list, list):
+                                    raw_list = []
+                                await self._broadcast(api_key, {
+                                    "type": "position",
+                                    "result": {"data": {"list": raw_list}},
+                                })
                         elif ch == "tradfi.balance":
                             # 在线程池中执行阻塞的同步 HTTP 请求，避免阻塞事件循环
                             try:
