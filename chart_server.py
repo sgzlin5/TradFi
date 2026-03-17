@@ -1059,8 +1059,15 @@ def api_trade_analysis(
     if not creds:
         raise HTTPException(401, detail="未登录")
 
-    now_ts  = int(time.time())
-    from_ts = now_ts - days * 86400
+    now_ts = int(time.time())
+    
+    if days == 1:
+        # 本日：从今天00:00:00开始
+        today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        from_ts = int(today_start.timestamp())
+    else:
+        # 滚动窗口：过去N天
+        from_ts = now_ts - days * 86400
 
     try:
         records = get_position_history(*creds, from_ts, now_ts)

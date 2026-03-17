@@ -1123,9 +1123,10 @@
       <div style="display:flex;align-items:center">
         <h2 style="display:inline">交易分析报告</h2>
         <div class="an-period-tabs">
+          <button class="an-period-tab active" data-days="1" onclick="switchAnalysisPeriod(1)">本日</button>
           <button class="an-period-tab" data-days="7" onclick="switchAnalysisPeriod(7)">最近1周</button>
           <button class="an-period-tab" data-days="14" onclick="switchAnalysisPeriod(14)">最近2周</button>
-          <button class="an-period-tab active" data-days="30" onclick="switchAnalysisPeriod(30)">最近30天</button>
+          <button class="an-period-tab" data-days="30" onclick="switchAnalysisPeriod(30)">最近30天</button>
         </div>
       </div>
       <span id="analysis-close" onclick="closeAnalysis()">×</span>
@@ -2669,7 +2670,7 @@ async function _saveBatchTPSL() {
 // ════════════════════════════════════════════
 //  数据分析报告
 // ════════════════════════════════════════════
-let _analysisDays = 30;
+let _analysisDays = 1;  // 默认显示本日
 
 function openAnalysis() {
   document.getElementById('analysis-overlay').classList.remove('hidden');
