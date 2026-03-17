@@ -487,6 +487,49 @@
   .btn-diary-dl { background: #1f6feb; border: none; color: #fff; }
   .btn-diary-dl:hover { background: #388bfd; }
 
+  /* ── Toast 通知 ── */
+  .toast-container {
+    position: fixed;
+    top: 80px;
+    right: 20px;
+    z-index: 2000;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .toast {
+    background: #1f6feb;
+    border: 1px solid #388bfd;
+    border-radius: 8px;
+    padding: 12px 16px;
+    min-width: 300px;
+    max-width: 400px;
+    color: #fff;
+    font-size: 13px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    animation: toastSlideIn 0.3s ease-out;
+    position: relative;
+  }
+  .toast.success { background: #1f6feb; border-color: #388bfd; }
+  .toast.error { background: #da3633; border-color: #f85149; }
+  .toast .toast-title {
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  .toast .toast-content {
+    white-space: pre-line;
+    line-height: 1.5;
+    opacity: 0.95;
+  }
+  @keyframes toastSlideIn {
+    from { opacity: 0; transform: translateX(40px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+  @keyframes toastFadeOut {
+    from { opacity: 1; transform: translateX(0); }
+    to { opacity: 0; transform: translateX(40px); }
+  }
+
   /* ── 市价下单面板 ── */
   #market-order-panel {
     flex-shrink: 0;
@@ -1362,15 +1405,17 @@ function updateMarketOrderInfo(askPrice, bidPrice, symbol) {
   }
 }
 
-// 更新输入框占位符
+// 更新输入框占位符和默认值
 function updateInputPlaceholder() {
   const inputType = document.getElementById('market-input-type').value;
   const inputEl = document.getElementById('market-cost-input');
   
   if (inputType === 'lots') {
     inputEl.placeholder = '手数';
+    inputEl.value = '0.01';  // 最小手数
   } else {
     inputEl.placeholder = '成本金额';
+    inputEl.value = '10';    // 最小成本金额
   }
 }
 
@@ -1532,19 +1577,14 @@ async function executeMarketOrder(orderData) {
     
     // 成功提示
     const orderId = result.data?.id || '未知';
-    alert(`市价${directionText}订单已成功提交！\n\n` +
-          `品种: ${orderData.symbol}\n` +
-          `方向: ${directionText}\n` +
-          `${inputTypeText}: ${orderData.value}\n` +
-          `手数: ${volume}\n` +
-          `价格: ${orderData.price}\n` +
-          `订单ID: ${orderId}`);
+    showToast('success', `市价${directionText}订单已成功提交`,
+      `品种: ${orderData.symbol}\n方向: ${directionText}\n${inputTypeText}: ${orderData.value}\n手数: ${volume}\n价格: ${orderData.price}\n订单ID: ${orderId}`);
     
     console.log('订单提交成功:', result);
     
   } catch (error) {
     console.error('订单提交失败:', error);
-    alert(`订单提交失败: ${error.message}`);
+    showToast('error', '订单提交失败', error.message);
   }
 }
 
@@ -2035,6 +2075,56 @@ function connectKlineWS(symbol, interval) {
   ws.onerror = () => {
     // onerror 后必定触发 onclose，由 onclose 处理重连
   };
+}
+
+// ════════════════════════════════════════════
+//  Toast 通知系统
+// ════════════════════════════════════════════
+let toastContainer = null;
+
+function ensureToastContainer() {
+  if (!toastContainer) {
+    toastContainer = document.createElement('div');
+    toastContainer.className = 'toast-container';
+    document.body.appendChild(toastContainer);
+  }
+}
+
+function showToast(type, title, content, duration = 3000) {
+  try {
+    ensureToastContainer();
+    
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    
+    const titleEl = document.createElement('div');
+    titleEl.className = 'toast-title';
+    titleEl.textContent = title;
+    
+    const contentEl = document.createElement('div');
+    contentEl.className = 'toast-content';
+    contentEl.textContent = content;
+    
+    toast.appendChild(titleEl);
+    toast.appendChild(contentEl);
+    toastContainer.appendChild(toast);
+    
+    // 自动关闭
+    setTimeout(() => {
+      toast.style.animation = 'toastFadeOut 0.3s ease-out forwards';
+      setTimeout(() => {
+        if (toast.parentNode) {
+          toast.parentNode.removeChild(toast);
+        }
+      }, 300);
+    }, duration);
+  } catch (error) {
+    console.error('Toast 显示失败:', error);
+    // 回退到 alert 或静默忽略
+    if (type === 'error') {
+      alert(`${title}: ${content}`);
+    }
+  }
 }
 
 // ════════════════════════════════════════════
