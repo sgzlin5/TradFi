@@ -390,29 +390,40 @@ class _PrivateWSManager:
                         if event != "update":
                             continue
                         if ch == "tradfi.position":
-                            # 获取最新的持仓数据并广播
+                            # 在线程池中执行阻塞的同步 HTTP 请求，避免阻塞事件循环
                             try:
-                                positions_data = get_positions(key, secret)
+                                loop = asyncio.get_event_loop()
+                                positions_data = await loop.run_in_executor(
+                                    None, get_positions, key, secret
+                                )
                                 await self._broadcast(api_key, {
                                     "type": "position",
                                     "result": positions_data
                                 })
-                            except Exception as e:
-                                # 如果获取失败，广播原始数据
-                                await self._broadcast(api_key,
-                                    {"type": "position", "result": data.get("result", [])})
+                            except Exception:
+                                # 如果获取失败，将原始 WS 列表包装为 REST 兼容格式
+                                raw_list = data.get("result", [])
+                                if not isinstance(raw_list, list):
+                                    raw_list = []
+                                await self._broadcast(api_key, {
+                                    "type": "position",
+                                    "result": {"data": {"list": raw_list}},
+                                })
                         elif ch == "tradfi.balance":
-                            # 获取最新的资产数据并广播
+                            # 在线程池中执行阻塞的同步 HTTP 请求，避免阻塞事件循环
                             try:
-                                assets_data = get_assets_data(key, secret)
+                                loop = asyncio.get_event_loop()
+                                assets_data = await loop.run_in_executor(
+                                    None, get_assets_data, key, secret
+                                )
                                 await self._broadcast(api_key, {
                                     "type": "balance",
                                     "result": assets_data
                                 })
-                            except Exception as e:
+                            except Exception:
                                 # 如果获取失败，广播原始数据
                                 await self._broadcast(api_key,
-                                    {"type": "balance",  "result": data.get("result", [])})
+                                    {"type": "balance", "result": data.get("result", [])})
             except asyncio.CancelledError:
                 return
             except Exception:
