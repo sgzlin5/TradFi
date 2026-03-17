@@ -1220,8 +1220,6 @@ let _tickerDigits    = 2;            // 当前品种小数位数缓存（供 cib
 let _accountBalance   = null;    // 当前账户余额，用于收益率计算
 let _macdFitted      = false;    // MACD 面板只 fitContent 一次，避免缩放被重置
 let _posTimer        = null;
-let _positionsCache  = null;    // WebSocket 推送的仓位数据缓存
-let _balanceCache   = null;       // WebSocket 推送的余额数据缓存
 let currentSymbol   = 'XAUUSD';
 let currentInterval = '1m';
 let currentCandles  = [];
@@ -2134,14 +2132,8 @@ function connectPrivateWS() {
   ws.onmessage = (event) => {
     const data = JSON.parse(event.data);
     if (data.ping) return;
-    if (data.type === 'position') {
-      _positionsCache = data.result;
-      loadPositions(data.result);
-    }
-    if (data.type === 'balance') {
-      _balanceCache = data.result;
-      loadAssets(data.result);
-    }
+    if (data.type === 'position') loadPositions(data.result);
+    if (data.type === 'balance')  loadAssets(data.result);
   };
 
   ws.onclose = (e) => {
@@ -2297,11 +2289,7 @@ async function loadAssets(balanceData = null) {
     let bal = null;
     let cur = '';
     
-    // 全部从 WebSocket 缓存获取数据（初始加载时仍使用 HTTP 作为后备）
-    if (!balanceData && _balanceCache) {
-      balanceData = _balanceCache;
-    }
-    
+    // 如果提供了余额数据（来自 WebSocket），直接使用；否则调用 HTTP API
     if (balanceData) {
       bal = balanceData?.balance ?? balanceData?.equity ?? null;
       cur = balanceData?.currency ?? '';
@@ -2415,11 +2403,17 @@ function togglePositionsPanel() {
 
 async function loadPositions(data = null) {
   try {
-    // 全部从 WebSocket 缓存获取数据
-    if (!data && _positionsCache) {
-      data = _positionsCache;
+    // 如果提供了数据（来自 WebSocket），直接使用；否则调用 HTTP API
+    let list = [];
+    if (data) {
+      list = data?.data?.list ?? [];
+    } else {
+      const res = await fetch('/api/positions');
+      if (res.status === 401) { window.location.href = '/login'; return; }
+      if (!res.ok) return;
+      const apiData = await res.json();
+      list = apiData?.data?.list ?? [];
     }
-    const list = data?.data?.list ?? [];
     const tbody = document.getElementById('pos-tbody');
     const empty = document.getElementById('pos-empty');
     const count = document.getElementById('pos-count');
@@ -3125,8 +3119,8 @@ loadConfig();
 renderMABadges();
 loadKlines(currentInterval);
 loadAssets();
-connectPrivateWS();
 loadPositions();
+connectPrivateWS();
 connectOrderBookWS(currentSymbol);
 connectTickerWS(currentSymbol);
 // 资产信息兜底刷新（每 10 秒），主要依赖私有 WS 推送触发
