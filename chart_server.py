@@ -63,6 +63,12 @@ _lockout_until:  float = 0.0
 MAX_FAILURES = 3
 LOCKOUT_SECS = 86400
 
+# K 线历史数据缓存：{(symbol, interval): [(time, open, high, low, close), ...]}
+_klines_cache: Dict[tuple, list] = {}
+
+# Gate.io 上游 WebSocket 连接缓存（预加载所有周期）：{(symbol, interval): WebSocketTask}
+_gate_ws_tasks: Dict[tuple, asyncio.Task] = {}
+
 
 # ── config.enc 解密 ───────────────────────────
 def _derive_key(password: str, salt: bytes) -> bytes:
@@ -359,12 +365,56 @@ def place_order(api_key: str, api_secret: str,
 
 # ── 实时 K 线 WebSocket 管理器 ────────────────
 class _KlineWSManager:
-    """管理浏览器 WS 订阅与 Gate.io 上游 WS 连接（每个 symbol+interval 维持一条上游连接）"""
+    """管理浏览器 WS 订阅与 Gate.io 上游 WS 连接（每个 symbol+interval) 维持一条上游连接）"""
 
     def __init__(self) -> None:
         self._clients:    Dict[tuple, Set[asyncio.Queue]] = {}
         self._gate_tasks: Dict[tuple, asyncio.Task]      = {}
         self._lock = asyncio.Lock()
+
+    async def preload_symbol(self, api_key: str, api_secret: str, symbol: str) -> None:
+        """
+        预加载指定交易对的所有周期：
+        1. 缓存所有周期的历史数据
+        2. 为所有周期建立 Gate.io 上游 WebSocket 连接
+        """
+        loop = asyncio.get_event_loop()
+        
+        # 并发加载所有周期的历史数据
+        for interval in KLINE_INTERVALS:
+            key = (symbol, interval)
+            if key not in _klines_cache:
+                try:
+                    raw = await loop.run_in_executor(
+                        None, lambda: get_klines(api_key, api_secret, symbol, interval, 300)
+                    )
+                    bars = raw.get("data", {}).get("list", [])
+                    candles = [
+                        {
+                            "time":  int(b[0]) / 1000,
+                            "open":  float(b[1]),
+                            "high":  float(b[2]),
+                            "low":   float(b[3]),
+                            "close": float(b[4]),
+                        }
+                        for b in bars
+                    ]
+                    _klines_cache[key] = candles
+                except Exception as e:
+                    print(f"预加载 {symbol} {interval} 历史数据失败: {e}")
+
+        # 为所有周期建立 Gate.io WebSocket 连接
+        async with self._lock:
+            for interval in KLINE_INTERVALS:
+                key = (symbol, interval)
+                if key not in self._gate_tasks or self._gate_tasks[key].done():
+                    # 使用共享队列（即使没有客户端，也保持连接以接收实时数据）
+                    self._gate_tasks[key] = asyncio.create_task(self._gate_feeder(key))
+
+    def get_cached_klines(self, symbol: str, interval: str) -> Optional[list]:
+        """获取缓存的历史数据"""
+        key = (symbol, interval)
+        return _klines_cache.get(key)
 
     async def subscribe(self, key: tuple, queue: asyncio.Queue) -> None:
         async with self._lock:
@@ -379,12 +429,22 @@ class _KlineWSManager:
             if key in self._clients:
                 self._clients[key].discard(queue)
                 if not self._clients[key]:
-                    task = self._gate_tasks.pop(key, None)
-                    if task:
-                        task.cancel()
+                    # 不再关闭连接，保持预加载的 Gate.io WebSocket 连接
                     del self._clients[key]
 
     async def _broadcast(self, key: tuple, msg: dict) -> None:
+        # 更新缓存中的最新数据
+        if key in _klines_cache:
+            time_val = msg.get("time")
+            if time_val:
+                candles = _klines_cache[key]
+                # 更新或添加最新 K 线
+                if candles and candles[-1]["time"] == time_val:
+                    candles[-1] = msg
+                else:
+                    candles.append(msg)
+        
+        # 广播给所有订阅者
         for q in list(self._clients.get(key, set())):
             try:
                 q.put_nowait(msg)
@@ -1577,27 +1637,39 @@ async def ws_klines(
     creds      = _sessions[sid]
     api_key    = creds["api_key"]
     api_secret = creds["api_secret"]
+    key        = (symbol, interval)
 
-    # 先百发送历史 K 线（同步 requests 放入线程池，避免阻塞事件循环）
-    try:
-        loop = asyncio.get_event_loop()
-        raw  = await loop.run_in_executor(
-            None, lambda: get_klines(api_key, api_secret, symbol, interval, 300)
-        )
-        bars    = raw.get("data", {}).get("list", [])
-        candles = sorted(
-            [{"time": int(b["t"]), "open": float(b["o"]),
-              "high": float(b["h"]), "low": float(b["l"]), "close": float(b["c"])}
-             for b in bars],
-            key=lambda x: x["time"],
-        )
+    # 检查缓存，如果没有则预加载该交易对的所有周期数据
+    cached_candles = _ws_manager.get_cached_klines(symbol, interval)
+    if cached_candles is None:
+        # 触发预加载
+        await _ws_manager.preload_symbol(api_key, api_secret, symbol)
+        cached_candles = _ws_manager.get_cached_klines(symbol, interval)
+
+    # 发送历史 K 线
+    if cached_candles:
+        candles = sorted(cached_candles, key=lambda x: x["time"])
         await websocket.send_json({"type": "history", "candles": candles})
-    except Exception as e:
-        await websocket.send_json({"type": "error", "message": str(e)})
-        return
+    else:
+        # 如果缓存加载失败，降级到同步请求
+        try:
+            loop = asyncio.get_event_loop()
+            raw  = await loop.run_in_executor(
+                None, lambda: get_klines(api_key, api_secret, symbol, interval, 300)
+            )
+            bars    = raw.get("data", {}).get("list", [])
+            candles = sorted(
+                [{"time": int(b[0]) / 1000, "open": float(b[1]),
+                  "high": float(b[2]), "low": float(b[3]), "close": float(b[4])}
+                 for b in bars],
+                key=lambda x: x["time"],
+            )
+            await websocket.send_json({"type": "history", "candles": candles})
+        except Exception as e:
+            await websocket.send_json({"type": "error", "message": str(e)})
+            return
 
     # 订阅实时 K 线推送
-    key: tuple           = (symbol, interval)
     queue: asyncio.Queue = asyncio.Queue(maxsize=100)
     await _ws_manager.subscribe(key, queue)
     try:
