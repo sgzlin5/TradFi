@@ -487,6 +487,135 @@
   .btn-diary-dl { background: #1f6feb; border: none; color: #fff; }
   .btn-diary-dl:hover { background: #388bfd; }
 
+  /* ── 本月盈亏弹窗（日历格式） ── */
+  #monthly-pnl-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.65);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 1002; overflow-y: auto; padding: 20px;
+  }
+  #monthly-pnl-overlay.hidden { display: none; }
+  #monthly-pnl-box {
+    background: #161b22; border: 1px solid #30363d; border-radius: 12px;
+    width: 680px; max-width: 96vw; max-height: 92vh;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  #monthly-pnl-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 18px; border-bottom: 1px solid #30363d; flex-shrink: 0;
+  }
+  #monthly-pnl-header h2 { font-size: 14px; font-weight: 700; color: #e6edf3; }
+  #monthly-pnl-header .sub { font-size: 11px; color: #8b949e; margin-left: 8px; }
+  #monthly-pnl-close { cursor: pointer; color: #8b949e; font-size: 22px; line-height: 1; }
+  #monthly-pnl-close:hover { color: #e6edf3; }
+  #monthly-pnl-body { flex: 1; overflow-y: auto; padding: 16px 18px 20px; }
+  #monthly-pnl-loading { text-align: center; padding: 40px; color: #8b949e; font-size: 13px; }
+
+  /* 汇总卡片 */
+  .mp-summary {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: 10px; margin-bottom: 16px;
+  }
+  .mp-summary-card {
+    background: #0d1117; border: 1px solid #30363d; border-radius: 8px;
+    padding: 12px 14px;
+  }
+  .mp-summary-card .label { font-size: 11px; color: #8b949e; margin-bottom: 4px; }
+  .mp-summary-card .value { font-size: 18px; font-weight: 700; }
+  .mp-summary-card .value.pos { color: #56d364; }
+  .mp-summary-card .value.neg { color: #f85149; }
+  .mp-summary-card .value.neu { color: #79c0ff; }
+
+  /* 日历样式 */
+  .mp-calendar {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 6px;
+    margin-top: 12px;
+  }
+  .mp-calendar-header {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+  .mp-calendar-day-name {
+    text-align: center;
+    font-size: 11px;
+    font-weight: 600;
+    color: #8b949e;
+    padding: 6px 4px;
+  }
+  .mp-calendar-cell {
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 8px 6px;
+    min-height: 70px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    transition: all .15s;
+  }
+  .mp-calendar-cell:hover {
+    border-color: #58a6ff;
+    transform: translateY(-2px);
+  }
+  .mp-calendar-cell.empty {
+    background: transparent;
+    border: none;
+  }
+  .mp-calendar-cell .date {
+    font-size: 12px;
+    font-weight: 600;
+    color: #8b949e;
+    margin-bottom: 2px;
+  }
+  .mp-calendar-cell .pnl {
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .mp-calendar-cell .pnl.pos { color: #56d364; }
+  .mp-calendar-cell .pnl.neg { color: #f85149; }
+  .mp-calendar-cell .pnl.neu { color: #8b949e; }
+  .mp-calendar-cell .rate {
+    font-size: 10px;
+  }
+  .mp-calendar-cell .rate.pos { color: #56d364; }
+  .mp-calendar-cell .rate.neg { color: #f85149; }
+  .mp-calendar-cell .rate.neu { color: #8b949e; }
+
+  /* 图例 */
+  .mp-legend {
+    display: flex;
+    gap: 16px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid #30363d;
+    font-size: 11px;
+    color: #8b949e;
+  }
+  .mp-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .mp-legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+  }
+  .mp-legend-dot.pos { background: #56d364; }
+  .mp-legend-dot.neg { background: #f85149; }
+  .mp-legend-dot.neu { background: #8b949e; }
+
+  #btn-monthly-pnl {
+    width: calc(100% - 28px); margin: 4px 14px 8px;
+    padding: 6px 0; background: #21262d; border: 1px solid #30363d;
+    border-radius: 6px; color: #8b949e; font-size: 12px; cursor: pointer;
+    transition: all .15s;
+  }
+  #btn-monthly-pnl:hover { border-color: #79c0ff; color: #79c0ff; }
+
   /* ── Toast 通知 ── */
   .toast-container {
     position: fixed;
@@ -927,6 +1056,7 @@
 
     <hr class="sidebar-divider">
 
+    <button id="btn-monthly-pnl" onclick="openMonthlyPnl()">📅 本月盈亏详情</button>
     <button id="btn-analysis" onclick="openAnalysis()">📊 数据分析报告</button>
     <button id="btn-diary"    onclick="openDiary()">📋 每日日记生成</button>
 
@@ -1002,6 +1132,22 @@
     </div>
     <div id="analysis-body">
       <div id="analysis-loading">加载中…</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── 本月盈亏弹窗（日历格式） ── -->
+<div id="monthly-pnl-overlay" class="hidden" onclick="_monthlyPnlBgClick(event)">
+  <div id="monthly-pnl-box">
+    <div id="monthly-pnl-header">
+      <div style="display:flex;align-items:center">
+        <h2 style="display:inline">本月每日盈亏</h2>
+        <span id="monthly-pnl-subtitle" class="sub"></span>
+      </div>
+      <span id="monthly-pnl-close" onclick="closeMonthlyPnl()">×</span>
+    </div>
+    <div id="monthly-pnl-body">
+      <div id="monthly-pnl-loading">数据加载中…</div>
     </div>
   </div>
 </div>
@@ -1986,8 +2132,8 @@ function connectPrivateWS() {
   ws.onmessage = (event) => {
     const data = JSON.parse(event.data);
     if (data.ping) return;
-    if (data.type === 'position') loadPositions();
-    if (data.type === 'balance')  loadAssets();
+    if (data.type === 'position') loadPositions(data.result);
+    if (data.type === 'balance')  loadAssets(data.result);
   };
 
   ws.onclose = (e) => {
@@ -2137,22 +2283,32 @@ function _fmtNum(v, digits = 2) {
 // ════════════════════════════════════════════
 //  资产信息
 // ════════════════════════════════════════════
-async function loadAssets() {
+async function loadAssets(balanceData = null) {
   // 资产信息（余额）
   try {
-    const res = await fetch('/api/assets');
-    if (res.status === 401) { window.location.href = '/login'; return; }
-    if (!res.ok) return;
-    const data = await res.json();
-    const bal = data?.data?.balance ?? data?.balance ?? data?.equity ?? null;
-    const cur = data?.data?.currency ?? data?.currency ?? '';
+    let bal = null;
+    let cur = '';
+    
+    // 如果提供了余额数据（来自 WebSocket），直接使用；否则调用 HTTP API
+    if (balanceData) {
+      bal = balanceData?.balance ?? balanceData?.equity ?? null;
+      cur = balanceData?.currency ?? '';
+    } else {
+      const res = await fetch('/api/assets');
+      if (res.status === 401) { window.location.href = '/login'; return; }
+      if (!res.ok) return;
+      const data = await res.json();
+      bal = data?.data?.balance ?? data?.balance ?? data?.equity ?? null;
+      cur = data?.data?.currency ?? data?.currency ?? '';
+    }
+    
     if (bal != null) {
       _accountBalance = Number(bal);
       const s = Number(bal).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       document.getElementById('balance-val').textContent = cur ? `$${s} ${cur}` : `$${s}`;
     }
   } catch(_) {}
-
+  
   // MT5 账户信息（MT5 ID + 强平比例 + 保证金）
   try {
     const res2 = await fetch('/api/mt5account');
@@ -2160,13 +2316,13 @@ async function loadAssets() {
     if (!res2.ok) return;
     const d2 = await res2.json();
     const mt5data = d2?.data ?? d2;
-
+    
     const mt5id = mt5data?.login ?? mt5data?.mt5_id ?? mt5data?.id ?? null;
     const sol   = mt5data?.stop_out_level ?? mt5data?.stopOutLevel ?? null;
     const mlv   = mt5data?.margin_level   ?? mt5data?.marginLevel  ?? null;
     const mfr   = mt5data?.margin_free    ?? mt5data?.marginFree   ?? null;
     const upnl  = mt5data?.unrealized_pnl ?? mt5data?.unrealizedPnl ?? mt5data?.floating_pl ?? null;
-
+    
     if (mt5id != null) document.getElementById('mt5-id').textContent = mt5id;
     if (sol   != null) document.getElementById('stop-out-val').textContent = `${sol}%`;
     if (mlv   != null) document.getElementById('margin-level-val').textContent = `${_fmtNum(mlv)}%`;
@@ -2245,13 +2401,19 @@ function togglePositionsPanel() {
   toggle.textContent = _posPanelExpanded ? '▾' : '▸';
 }
 
-async function loadPositions() {
+async function loadPositions(data = null) {
   try {
-    const res = await fetch('/api/positions');
-    if (res.status === 401) { window.location.href = '/login'; return; }
-    if (!res.ok) return;
-    const data  = await res.json();
-    const list  = data?.data?.list ?? [];
+    // 如果提供了数据（来自 WebSocket），直接使用；否则调用 HTTP API
+    let list = [];
+    if (data) {
+      list = data?.data?.list ?? [];
+    } else {
+      const res = await fetch('/api/positions');
+      if (res.status === 401) { window.location.href = '/login'; return; }
+      if (!res.ok) return;
+      const apiData = await res.json();
+      list = apiData?.data?.list ?? [];
+    }
     const tbody = document.getElementById('pos-tbody');
     const empty = document.getElementById('pos-empty');
     const count = document.getElementById('pos-count');
@@ -2661,6 +2823,122 @@ function closeDiary() {
 }
 function _diaryBgClick(e) {
   if (e.target === document.getElementById('diary-overlay')) closeDiary();
+}
+
+// ════════════════════════════════════════════
+//  本月盈亏
+// ════════════════════════════════════════════
+function openMonthlyPnl() {
+  document.getElementById('monthly-pnl-overlay').classList.remove('hidden');
+  document.getElementById('monthly-pnl-body').innerHTML = 
+    '<div id="monthly-pnl-loading">数据加载中…</div>';
+  fetchMonthlyPnl();
+}
+function closeMonthlyPnl() {
+  document.getElementById('monthly-pnl-overlay').classList.add('hidden');
+}
+function _monthlyPnlBgClick(e) {
+  if (e.target === document.getElementById('monthly-pnl-overlay')) closeMonthlyPnl();
+}
+
+async function fetchMonthlyPnl() {
+  try {
+    const res = await fetch('/api/monthly_pnl_detail', { cache: 'no-store' });
+    if (res.status === 401) { window.location.href = '/login'; return; }
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    renderMonthlyPnl(data);
+  } catch(e) {
+    document.getElementById('monthly-pnl-body').innerHTML =
+      `<div style="text-align:center;padding:40px;color:#f85149">加载失败: ${e.message}</div>`;
+  }
+}
+
+function renderMonthlyPnl(d) {
+  // 更新标题
+  document.getElementById('monthly-pnl-subtitle').textContent = 
+    `${d.year}年${d.month}月`;
+
+  // 汇总卡片
+  const totalPnl = d.total_pnl;
+  const totalRate = d.total_rate;
+  const balance = d.balance;
+  
+  const totalPnlCls = totalPnl > 0 ? 'pos' : totalPnl < 0 ? 'neg' : 'neu';
+  const totalRateCls = totalRate > 0 ? 'pos' : totalRate < 0 ? 'neg' : 'neu';
+
+  // 生成日历单元格
+  const dayNames = ['日', '一', '二', '三', '四', '五', '六'];
+  const calendarCells = [];
+  
+  // 添加星期标题
+  const headerCells = dayNames.map(name => 
+    `<div class="mp-calendar-day-name">${name}</div>`
+  ).join('');
+  
+  // 添加空白单元格（月初前的空白）
+  for (let i = 0; i < d.first_weekday; i++) {
+    calendarCells.push(`<div class="mp-calendar-cell empty"></div>`);
+  }
+  
+  // 添加日期单元格
+  for (let day = 1; day <= d.days_in_month; day++) {
+    const dayData = d.days[day] || { pnl: 0, rate: 0 };
+    const pnl = dayData.pnl;
+    const rate = dayData.rate;
+    const pnlCls = pnl > 0 ? 'pos' : pnl < 0 ? 'neg' : 'neu';
+    const rateCls = rate > 0 ? 'pos' : rate < 0 ? 'neg' : 'neu';
+    
+    calendarCells.push(`
+      <div class="mp-calendar-cell">
+        <div class="date">${day}</div>
+        <div class="pnl ${pnlCls}">${pnl >= 0 ? '+' : ''}$${Math.abs(pnl).toFixed(0)}</div>
+        <div class="rate ${rateCls}">${rate >= 0 ? '+' : ''}${rate.toFixed(2)}%</div>
+      </div>
+    `);
+  }
+
+  document.getElementById('monthly-pnl-body').innerHTML = `
+    <!-- 汇总卡片 -->
+    <div class="mp-summary">
+      <div class="mp-summary-card">
+        <div class="label">账户余额</div>
+        <div class="value neu">$${balance.toFixed(2)}</div>
+      </div>
+      <div class="mp-summary-card">
+        <div class="label">本月总盈亏</div>
+        <div class="value ${totalPnlCls}">${totalPnl >= 0 ? '+' : ''}$${Math.abs(totalPnl).toFixed(2)}</div>
+      </div>
+      <div class="mp-summary-card">
+        <div class="label">本月收益率</div>
+        <div class="value ${totalRateCls}">${totalRate >= 0 ? '+' : ''}${totalRate.toFixed(2)}%</div>
+      </div>
+    </div>
+
+    <!-- 日历 -->
+    <div class="mp-calendar-header">
+      ${headerCells}
+    </div>
+    <div class="mp-calendar">
+      ${calendarCells.join('')}
+    </div>
+
+    <!-- 图例 -->
+    <div class="mp-legend">
+      <div class="mp-legend-item">
+        <div class="mp-legend-dot pos"></div>
+        <span>盈利</span>
+      </div>
+      <div class="mp-legend-item">
+        <div class="mp-legend-dot neg"></div>
+        <span>亏损</span>
+      </div>
+      <div class="mp-legend-item">
+        <div class="mp-legend-dot neu"></div>
+        <span>无交易</span>
+      </div>
+    </div>
+  `;
 }
 
 async function fetchDiary() {

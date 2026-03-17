@@ -390,11 +390,29 @@ class _PrivateWSManager:
                         if event != "update":
                             continue
                         if ch == "tradfi.position":
-                            await self._broadcast(api_key,
-                                {"type": "position", "result": data.get("result", [])})
+                            # 获取最新的持仓数据并广播
+                            try:
+                                positions_data = get_positions(key, secret)
+                                await self._broadcast(api_key, {
+                                    "type": "position",
+                                    "result": positions_data
+                                })
+                            except Exception as e:
+                                # 如果获取失败，广播原始数据
+                                await self._broadcast(api_key,
+                                    {"type": "position", "result": data.get("result", [])})
                         elif ch == "tradfi.balance":
-                            await self._broadcast(api_key,
-                                {"type": "balance",  "result": data.get("result", [])})
+                            # 获取最新的资产数据并广播
+                            try:
+                                assets_data = get_assets_data(key, secret)
+                                await self._broadcast(api_key, {
+                                    "type": "balance",
+                                    "result": assets_data
+                                })
+                            except Exception as e:
+                                # 如果获取失败，广播原始数据
+                                await self._broadcast(api_key,
+                                    {"type": "balance",  "result": data.get("result", [])})
             except asyncio.CancelledError:
                 return
             except Exception:
@@ -811,6 +829,85 @@ def api_pnl_summary(request: Request):
     return JSONResponse({
         "recent_days": recent_days,
         "month_pnl":   round(month_pnl, 2),
+    })
+
+
+# ── 本月每日盈亏详情（需登录）──────────────────────
+@app.get("/api/monthly_pnl_detail")
+def api_monthly_pnl_detail(request: Request):
+    """获取本月每日盈亏详情，返回日历格式数据"""
+    creds = _get_creds(request)
+    if not creds:
+        raise HTTPException(401, detail="未登录")
+    
+    now_ts = int(time.time())
+    today  = date.today()
+    
+    # 本月起始时间戳
+    month_start   = date(today.year, today.month, 1)
+    month_from_ts = int(datetime(month_start.year, month_start.month, month_start.day).timestamp())
+    
+    # 获取本月第一天是星期几（0=周日，1=周一，...，6=周六）
+    first_weekday = month_start.weekday() + 1  # weekday()返回0=周一，需要转换为0=周日
+    if first_weekday == 7:
+        first_weekday = 0
+    
+    # 获取本月总天数
+    import calendar
+    days_in_month = calendar.monthrange(today.year, today.month)[1]
+    
+    try:
+        # 获取账户余额（与前端 loadAssets 取值路径保持一致）
+        assets_data = get_assets_data(*creds)
+        _inner  = assets_data.get("data") or assets_data
+        balance = float(_inner.get("balance") or _inner.get("equity") or 0)
+        
+        # 获取本月持仓历史
+        records = get_position_history(*creds, month_from_ts, now_ts)
+    except Exception as e:
+        raise HTTPException(502, detail=str(e))
+    
+    # 按日期聚合盈亏数据
+    day_pnl: dict[int, float] = {}
+    month_pnl: float = 0.0
+    
+    for r in records:
+        t   = int(r.get("time_close") or 0)
+        pnl = float(r.get("realized_pnl") or 0)
+        if t < month_from_ts:
+            continue
+        month_pnl += pnl
+        
+        # 获取日期（1-31）
+        day = date.fromtimestamp(t).day
+        day_pnl[day] = day_pnl.get(day, 0.0) + pnl
+    
+    # 计算收益率（基于账户余额）
+    if balance > 0:
+        for day in day_pnl:
+            day_pnl[day] = {"pnl": round(day_pnl[day], 2), "rate": round(day_pnl[day] / balance * 100, 2)}
+    else:
+        for day in day_pnl:
+            day_pnl[day] = {"pnl": round(day_pnl[day], 2), "rate": 0.0}
+    
+    # 确保所有日期都有数据（无交易的日期显示为0）
+    for day in range(1, days_in_month + 1):
+        if day not in day_pnl:
+            day_pnl[day] = {"pnl": 0.0, "rate": 0.0}
+    
+    # 计算本月总收益率
+    total_rate = (month_pnl / balance * 100) if balance > 0 else 0.0
+    
+    return JSONResponse({
+        "year": today.year,
+        "month": today.month,
+        "days": {str(k): {"pnl": round(v["pnl"], 2), "rate": round(v["rate"], 2)} 
+                 for k, v in sorted(day_pnl.items())},
+        "total_pnl": round(month_pnl, 2),
+        "total_rate": round(total_rate, 2),
+        "balance": round(balance, 2),
+        "first_weekday": first_weekday,
+        "days_in_month": days_in_month,
     })
 
 
