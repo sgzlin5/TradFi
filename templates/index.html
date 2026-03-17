@@ -80,6 +80,82 @@
   .sidebar-row .sr-label { color: #8b949e; white-space: nowrap; }
   .sidebar-row .sr-val   { color: #e6edf3; font-weight: 600; white-space: nowrap; }
   .sidebar-divider { border: none; border-top: 1px solid #30363d; margin: 8px 0; }
+  /* ── MACD 趋势显示区域 ── */
+  .macd-trend-section {
+    padding: 10px 14px;
+  }
+  .macd-trend-title {
+    font-size: 11px; font-weight: 700; color: #8b949e;
+    letter-spacing: 0.8px; text-transform: uppercase;
+    margin-bottom: 8px; text-align: center;
+  }
+  .macd-trend-grid {
+    display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px;
+  }
+  .macd-trend-item {
+    display: flex; flex-direction: column; align-items: center;
+    padding: 6px 4px; background: #0d1117;
+    border: 1px solid #30363d; border-radius: 6px;
+    transition: all 0.2s;
+  }
+  .macd-trend-item:hover {
+    border-color: #58a6ff;
+    transform: translateY(-2px);
+  }
+  .macd-trend-time {
+    font-size: 10px; color: #8b949e;
+    margin-bottom: 4px; font-weight: 600;
+  }
+  .macd-trend-badge {
+    display: flex; align-items: center; justify-content: center;
+    gap: 4px; padding: 4px 6px; border-radius: 4px;
+    font-size: 9px; font-weight: 700;
+    min-width: 50px; text-align: center;
+  }
+  /* 强势多头 - 深绿色 */
+  .macd-trend-badge.strong_bull {
+    background: rgba(38, 166, 65, 0.3);
+    color: #26a641;
+    border: 1px solid rgba(38, 166, 65, 0.6);
+  }
+  /* 弱势多头 - 浅绿色 */
+  .macd-trend-badge.weak_bull {
+    background: rgba(38, 166, 65, 0.15);
+    color: #3fb950;
+    border: 1px solid rgba(63, 185, 80, 0.4);
+  }
+  /* 弱势空头 - 浅红色 */
+  .macd-trend-badge.weak_bear {
+    background: rgba(248, 81, 73, 0.15);
+    color: #f85149;
+    border: 1px solid rgba(248, 81, 73, 0.4);
+  }
+  /* 强势空头 - 深红色 */
+  .macd-trend-badge.strong_bear {
+    background: rgba(248, 81, 73, 0.3);
+    color: #da3633;
+    border: 1px solid rgba(218, 54, 51, 0.6);
+  }
+  /* 中性震荡 - 灰色 */
+  .macd-trend-badge.neutral {
+    background: rgba(139, 148, 158, 0.2);
+    color: #8b949e;
+    border: 1px solid rgba(139, 148, 158, 0.4);
+  }
+  .macd-trend-values {
+    display: flex; flex-direction: column; align-items: center;
+    margin-top: 4px; font-size: 8px; color: #6e7681; width: 100%;
+  }
+  .macd-trend-value {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .macd-trend-loading {
+    text-align: center; padding: 20px 14px;
+    color: #8b949e; font-size: 12px;
+  }
   #kline-status { font-size: 12px; color: #8b949e; white-space: nowrap; }
   /* 买卖报价 */
   .ob-row { display: flex; align-items: baseline; justify-content: center; gap: 6px; padding: 6px 14px 2px; }
@@ -138,8 +214,8 @@
   }
   /* 表单控件 */
   .modal-overlay.hidden { display: none; }
-    background: #161b22; border: 1px solid #30363d; border-radius: 10px;
   .modal-box {
+    background: #161b22; border: 1px solid #30363d; border-radius: 10px;
     display: flex; flex-direction: column; overflow: hidden;
   }
   .modal-header {
@@ -1060,6 +1136,17 @@
     <button id="btn-analysis" onclick="openAnalysis()">📊 数据分析报告</button>
     <button id="btn-diary"    onclick="openDiary()">📋 每日日记生成</button>
 
+    <hr class="sidebar-divider">
+
+    <!-- MACD 趋势判断区域 -->
+    <div class="macd-trend-section">
+      <div class="macd-trend-title">MACD 趋势</div>
+      <div id="macd-trend-container" class="macd-trend-grid">
+        <!-- 趋势数据将通过 JS 动态加载 -->
+        <div class="macd-trend-loading">加载中...</...div>
+      </div>
+    </div>
+
   </div>
 </div><!-- /#account-sidebar -->
 
@@ -1245,6 +1332,110 @@ let macdCfg = {
   height: 160,                 // MACD面板高度
 };
 let macdChart = null, macdLineSeries = null, signalLineSeries = null, histSeries = null;
+
+// ── MACD 趋势配置 ────────────────────────────────
+let macdTrendConfig = {
+  enabled: true,
+  refreshInterval: 30000,  // 30秒刷新一次
+  intervals: ["1h", "4h", "30m", "15m", "5m"]
+};
+
+let macdTrendTimer = null;
+
+// ── MACD 趋势显示函数 ─────────────────────────────
+function getCurrentSymbol() {
+  const urlParams = new URLSearchParams(window.location.search);
+  const symbolFromUrl = urlParams.get('symbol');
+  if (symbolFromUrl) return symbolFromUrl;
+  
+  const titleEl = document.getElementById('symbol-title');
+  if (titleEl && titleEl.textContent) return titleEl.textContent.trim();
+  
+  return "XAUUSD";
+}
+
+async function fetchMacdTrend(symbol = null) {
+  if (!symbol) symbol = getCurrentSymbol();
+  if (!symbol) {
+    console.warn('无法获取当前交易品种');
+    return null;
+  }
+  
+  try {
+    const response = await fetch(`/api/macd-trend?symbol=${encodeURIComponent(symbol)}`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    return await response.json();
+  } catch (error) {
+    console.error('获取 MACD 趋势失败:', error);
+    return null;
+  }
+}
+
+function renderMacdTrend(data) {
+  const container = document.getElementById('macd-trend-container');
+  if (!container) return;
+  
+  if (!data || !data.trends) {
+    container.innerHTML = '<div class="macd-trend-loading">加载失败</div>';
+    return;
+  }
+  
+  const intervals = macdTrendConfig.intervals;
+  const trendIcons = {
+    'strong_bull': '🚀', 'weak_bull': '📈',
+    'weak_bear': '📉', 'strong_bear': '💥', 'neutral': '🔄'
+  };
+  
+  let html = '';
+  for (const interval of intervals) {
+    const trendData = data.trends[interval];
+    if (!trendData) continue;
+    
+    const trend = trendData.trend || 'neutral';
+    const icon = trendIcons[trend] || '🔄';
+    
+    html += `
+      <div class="macd-trend-item">
+        <div class="macd-trend-time">${interval}</div>
+        <div class="macd-trend-badge ${trend}">${icon} ${trendData.label || '未知'}</div>
+        <div class="macd-trend-values">
+          <span class="macd-trend-value">MACD: ${trendData.macd !== null ? trendData.macd.toFixed(3) : '--'}</span>
+          <span class="macd-trend-value">Diff: ${trendData.hist !== null ? trendData.hist.toFixed(3) : '--'}</span>
+        </div>
+      </div>
+    `;
+  }
+  container.innerHTML = html;
+}
+
+async function updateMacdTrend() {
+  const symbol = getCurrentSymbol();
+  if (!symbol) return;
+  
+  const container = document.getElementById('macd-trend-container');
+  if (container) container.innerHTML = '<div class="macd-trend-loading">更新中...</div>';
+  
+  const data = await fetchMacdTrend(symbol);
+  if (data) renderMacdTrend(data);
+}
+
+function startMacdTrendRefresh() {
+  if (macdTrendTimer) clearInterval(macdTrendTimer);
+  updateMacdTrend();
+  macdTrendTimer = setInterval(() => updateMacdTrend(), macdTrendConfig.refreshInterval);
+}
+
+function stopMacdTrendRefresh() {
+  if (macdTrendTimer) {
+    clearInterval(macdTrendTimer);
+    macdTrendTimer = null;
+  }
+}
+
+function initMacdTrend() {
+  if (!macdTrendConfig.enabled) return;
+  startMacdTrendRefresh();
+}
 
 // ════════════════════════════════════════════
 //  主图表
@@ -3094,6 +3285,8 @@ SYMBOLS.forEach(sym => {
     connectTickerWS(sym);
     // 更新市价下单面板上的品种
     updateMarketOrderSymbol();
+    // 更新 MACD 趋势
+    updateMacdTrend();
   });
   symbolBar.appendChild(btn);
 });
@@ -3124,6 +3317,8 @@ loadPositions();
 connectPrivateWS();
 connectOrderBookWS(currentSymbol);
 connectTickerWS(currentSymbol);
+// 初始化 MACD 趋势功能
+initMacdTrend();
 // 资产信息兜底刷新（每 10 秒），主要依赖私有 WS 推送触发
 const _assetsTimer = setInterval(loadAssets, 10000);
 // 仓位兜底刷新（每 2 秒），P&L 更新依赖轮询；私有 WS 推送时立即刷新

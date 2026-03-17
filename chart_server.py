@@ -147,6 +147,115 @@ def get_klines(api_key: str, api_secret: str,
     return resp.json()
 
 
+# ── MACD 计算 ─────────────────────────────
+def ema(values: list, period: int) -> list:
+    """计算指数移动平均线 (EMA)"""
+    if period <= 0 or len(values) < period:
+        return [None] * len(values)
+    
+    ema_values = [None] * len(values)
+    multiplier = 2 / (period + 1)
+    
+    # 第一个 EMA 使用简单移动平均
+    sma = sum(values[:period]) / period
+    ema_values[period - 1] = sma
+    
+    # 后续使用 EMA 公式
+    for i in range(period, len(values)):
+        ema_values[i] = (values[i] - ema_values[i - 1]) * multiplier + ema_values[i - 1]
+    
+    return ema_values
+
+
+def calc_macd(closes: list, fast: int = 12, slow: int = 26, signal: int = 9) -> dict:
+    """
+    计算 MACD 指标
+    
+    参数:
+        closes: 收盘价列表
+        fast: 快线周期 (默认 12)
+        slow: 慢线周期 (默认 26)
+        signal: 信号线周期 (默认 9)
+    
+    返回:
+        {'macd': [...], 'signal': [...], 'hist': [...]}
+    """
+    ema_fast = ema(closes, fast)
+    ema_slow = ema(closes, slow)
+    
+    # MACD 线 (DIF) = 快线 EMA - 慢线 EMA
+    macd = []
+    for i in range(len(closes)):
+        if ema_fast[i] is not None and ema_slow[i] is not None:
+            macd.append(ema_fast[i] - ema_slow[i])
+        else:
+            macd.append(None)
+    
+    # 信号线 (DEA) 是 MACD 线的 EMA
+    signal_line = ema([v for v in macd if v is not None], signal)
+    
+    # 填充信号线以匹配 MACD 长度
+    signal_full = []
+    signal_idx = 0
+    for i in range(len(macd)):
+        if macd[i] is None:
+            signal_full.append(None)
+        elif signal_idx < len(signal_line) and signal_line[signal_idx] is not None:
+            signal_full.append(signal_line[signal_idx])
+            signal_idx += 1
+        else:
+            signal_full.append(None)
+    
+    # 柱状图 = MACD - 信号线
+    hist = []
+    for i in range(len(macd)):
+        if macd[i] is not None and signal_full[i] is not None:
+            hist.append(macd[i] - signal_full[i])
+        else:
+            hist.append(None)
+    
+    return {'macd': macd, 'signal': signal_full, 'hist': hist}
+
+
+def get_macd_trend(macd_value: float, signal_value: float) -> str:
+    """
+    根据 MACD 值判断趋势（5种状态）
+    
+    参数:
+        macd_value: MACD线 (DIF) 值
+        signal_value: 信号线 (DEA) 值
+    
+    返回:
+        'strong_bull' (强势多头)
+        'weak_bull' (弱势多头)
+        'weak_bear' (弱势空头)
+        'strong_bear' (强势空头)
+        'neutral' (中性震荡)
+    """
+    if macd_value is None or signal_value is None:
+        return 'neutral'
+    
+    # 强势多头：DIF > 0 且 DIF > DEA
+    if macd_value > 0 and macd_value > signal_value:
+        return 'strong_bull'
+    
+    # 弱势多头：DIF > 0 但 DIF < DEA
+    elif macd_value > 0 and macd_value < signal_value:
+        return 'weak_bull'
+    
+    # 弱势空头：DIF < 0 但 DIF > DEA
+    elif macd_value < 0 and macd_value > signal_value:
+        return 'weak_bear'
+    
+    # 强势空头：DIF < 0 且 DIF < DEA
+    elif macd_value < 0 and macd_value < signal_value:
+        return 'strong_bear'
+    
+    # 中性震荡：其他情况（DIF和DEA非常接近）
+    else:
+        return 'neutral'
+
+
 def get_assets_data(api_key: str, api_secret: str) -> dict:
     url_path = "/api/v4/tradfi/users/assets"
     headers  = gen_sign(api_key, api_secret, "GET", url_path, "")
@@ -1248,6 +1357,98 @@ def api_trade_analysis(
         },
         headers={"Cache-Control": "no-store"},
     )
+
+
+# ── MACD 趋势判断接口（需登录）──────────────────────
+@app.get("/api/macd-trend")
+def api_macd_trend(
+    request: Request,
+    symbol: str = Query(default="XAUUSD")
+):
+    """
+    获取指定品种多个时间周期的 MACD 趋势
+    
+    返回格式:
+    {
+        "symbol": "XAUUSD",
+        "timestamp": 1678901234,
+        "trends": {
+            "1h": {"trend": "strong_bull", "label": "强势多头", "macd": 2.34, "signal": 1.89, "hist": 0.45},
+            "4h": {"trend": "strong_bear", "label": "强势空头", "macd": -1.23, "signal": -0.87, "hist": -0.36},
+            ...
+        }
+    }
+    """
+    creds = _get_creds(request)
+    if not creds:
+        raise HTTPException(401, detail="未登录")
+    
+    api_key, api_secret = creds
+    
+    # 需要查询的时间周期
+    intervals = ["1h", "4h", "30m", "15m", "5m"]
+    
+    # 趋势标签映射
+    trend_labels = {
+        'strong_bull': '强势多头',
+        'weak_bull': '弱势多头',
+        'weak_bear': '弱势空头',
+        'strong_bear': '强势空头',
+        'neutral': '中性震荡'
+    }
+    
+    result = {"symbol": symbol, "timestamp": int(time.time()), "trends": {}}
+    
+    for interval in intervals:
+        try:
+            # 获取 K 线数据
+            raw = get_klines(api_key, api_secret, symbol, interval, limit=100)
+            bars = raw.get("data", {}).get("list", [])
+            
+            if len(bars) < 26:  # 需要足够的数据计算 MACD
+                result["trends"][interval] = {
+                    "trend": "neutral",
+                    "label": "数据不足",
+                    "macd": None,
+                    "signal": None,
+                    "hist": None
+                }
+                continue
+            
+            # 提取收盘价
+            closes = [float(b["c"]) for b in bars]
+            
+            # 计算 MACD
+            macd_result = calc_macd(closes, fast=12, slow=26, signal=9)
+            
+            # 获取最新的 MACD 值
+            latest_macd = macd_result["macd"][-1]
+            latest_signal = macd_result["signal"][-1]
+            latest_hist = macd_result["hist"][-1]
+            
+            # 判断趋势
+            trend = get_macd_trend(latest_macd, latest_signal)
+            
+            result["trends"][interval] = {
+                "trend": trend,
+                "label": trend_labels.get(trend, "未知"),
+                "macd": round(latest_macd, 5) if latest_macd is not None else None,
+                "signal": round(latest_signal, 5) if latest_signal is not None else None,
+                "hist": round(latest_hist, 5) if latest_hist is not None else None
+            }
+            
+        except Exception as e:
+            # 错误处理
+            result["trends"][interval] = {
+                "trend": "neutral",
+                "label": "错误",
+                "macd": None,
+                "signal": None,
+                "hist": None,
+                "error": str(e)
+            }
+    
+    return JSONResponse(content=result)
 
 
 # ── 行情 Ticker WebSocket 接口（需登录）──────────
