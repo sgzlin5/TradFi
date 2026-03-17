@@ -2143,7 +2143,7 @@ function switchTab(name) {
 //  加载 K 线
 // ════════════════════════════════════════════
 function loadKlines(interval) {
-  document.getElementById('kline-status').textContent = '加载中…';
+  document.getElementById('kline-status').textContent = '连接中…';
   connectKlineWS(currentSymbol, interval);
 }
 
