@@ -393,6 +393,46 @@ class _PrivateWSManager:
                             # 获取最新的持仓数据并广播
                             try:
                                 positions_data = get_positions(key, secret)
+                                
+                                # 使用实时价格重新计算 unrealized_pnl
+                                result_list = positions_data.get("result", []) if isinstance(positions_data.get("result"), list) else []
+                                for position in result_list:
+                                    if not isinstance(position, dict):
+                                        continue
+                                    
+                                    symbol = position.get("symbol", "")
+                                    position_dir = str(position.get("position_dir", "")).lower()
+                                    price_open = position.get("price_open")
+                                    volume = position.get("volume")
+                                    
+                                    if not symbol or not price_open or not volume:
+                                        continue
+                                    
+                                    try:
+                                        open_price = float(price_open)
+                                        vol = float(volume)
+                                        
+                                        # 根据持仓方向选择当前价格
+                                        if position_dir == "long":
+                                            current_price = await _price_cache.get_ask(symbol)
+                                        else:  # short
+                                            current_price = await _price_cache.get_bid(symbol)
+                                        
+                                        if current_price is not None:
+                                            # 计算未实现盈亏
+                                            # 外汇交易合约乘数通常为 1（1手=100,000单位，但盈亏计算已包含）
+                                            if position_dir == "long":
+                                                pnl = (current_price - open_price) * vol
+                                            else:  # short
+                                                pnl = (open_price - current_price) * vol
+                                            
+                                            # 更新 unrealized_pnl 字段
+                                            position["unrealized_pnl"] = round(pnl, 2)
+                                            # 同时更新 counterparty_price，保持数据一致性
+                                            position["counterparty_price"] = str(current_price)
+                                    except (ValueError, TypeError):
+                                        pass
+                                
                                 await self._broadcast(api_key, {
                                     "type": "position",
                                     "result": positions_data
@@ -420,6 +460,45 @@ class _PrivateWSManager:
 
 
 _private_ws_manager = _PrivateWSManager()
+
+
+# ── 实时价格缓存管理器 ────────────────────────
+class _PriceCacheManager:
+    """缓存各个交易对的实时 bid/ask 价格，用于快速计算未实现盈亏"""
+
+    def __init__(self) -> None:
+        # symbol -> {"bid": float, "ask": float, "timestamp": float}
+        self._prices: Dict[str, Dict[str, float]] = {}
+        self._lock = asyncio.Lock()
+
+    async def update_price(self, symbol: str, bid: float, ask: float) -> None:
+        """更新交易对的实时价格"""
+        async with self._lock:
+            self._prices[symbol] = {
+                "bid": bid,
+                "ask": ask,
+                "timestamp": time.time()
+            }
+
+    async def get_price(self, symbol: str) -> Optional[Dict[str, float]]:
+        """获取交易对的实时价格"""
+        async with self._lock:
+            return self._prices.get(symbol)
+
+    async def get_bid(self, symbol: str) -> Optional[float]:
+        """获取交易对的买价"""
+        async with self._lock:
+            price_data = self._prices.get(symbol)
+            return price_data["bid"] if price_data else None
+
+    async def get_ask(self, symbol: str) -> Optional[float]:
+        """获取交易对的卖价"""
+        async with self._lock:
+            price_data = self._prices.get(symbol)
+            return price_data["ask"] if price_data else None
+
+
+_price_cache = _PriceCacheManager()
 
 
 # ── 最优买卖价 WebSocket 管理器 ────────────────
@@ -471,9 +550,23 @@ class _OrderBookWSManager:
                         if (data.get("channel") == "tradfi.order_book"
                                 and data.get("event") == "update"):
                             for r in data.get("result", []):
+                                bid = r.get("bid", "")
+                                ask = r.get("ask", "")
+                                
+                                # 更新价格缓存
+                                if bid and ask:
+                                    try:
+                                        await _price_cache.update_price(
+                                            symbol, 
+                                            float(bid), 
+                                            float(ask)
+                                        )
+                                    except (ValueError, TypeError):
+                                        pass
+                                
                                 await self._broadcast(symbol, {
-                                    "bid": r.get("bid", ""),
-                                    "ask": r.get("ask", ""),
+                                    "bid": bid,
+                                    "ask": ask,
                                 })
             except asyncio.CancelledError:
                 return
