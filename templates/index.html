@@ -1221,7 +1221,10 @@ let _accountBalance   = null;    // 当前账户余额，用于收益率计算
 let _macdFitted      = false;    // MACD 面板只 fitContent 一次，避免缩放被重置
 let _posTimer        = null;
 let _positionsCache  = null;    // WebSocket 推送的仓位数据缓存
-let _balanceCache   = null;       // WebSocket 推送的余额数据缓存
+let _balanceCache    = null;    // WebSocket 推送的余额数据缓存
+let _symbolPrices    = {};      // symbol → {ask, bid} 实时订单薄价格
+let _posMultipliers  = {};      // position_id → PnL 乘数（由 REST 数据推导，含合约大小和账户货币换算）
+let _posObWSMap      = {};      // symbol → WebSocket（非图表品种的仓位 OB 订阅）
 let currentSymbol   = 'XAUUSD';
 let currentInterval = '1m';
 let currentCandles  = [];
@@ -2106,6 +2109,9 @@ function connectOrderBookWS(symbol) {
     document.getElementById('ob-spread').textContent = spread;
     // 更新市价下单按钮上的价格（传递数字，由formatPrice统一格式化）
     updateMarketOrderInfo(ask, bid, symbol);
+    // 更新实时价格缓存，并触发该品种仓位浮盈亏的实时刷新
+    _symbolPrices[symbol] = { ask, bid };
+    _refreshPnLFromOB(symbol);
   };
 
   ws.onclose = (e) => {
@@ -2135,6 +2141,20 @@ function connectPrivateWS() {
     const data = JSON.parse(event.data);
     if (data.ping) return;
     if (data.type === 'position') {
+      // WS 推送仅含结构字段（无 counterparty_price / unrealized_pnl）
+      // 将 WS 新数据与缓存中的价格/PnL 字段合并，避免切换瞬间显示为 0
+      const newList = data.result?.data?.list ?? [];
+      if (_positionsCache?.data?.list?.length) {
+        const cacheMap = new Map(_positionsCache.data.list.map(p => [p.position_id, p]));
+        data.result = { data: { list: newList.map(p => {
+          const cached = cacheMap.get(p.position_id) ?? {};
+          const merged = { ...cached, ...p };
+          // WS 推送不含价格/PnL 字段，保留缓存中的实时计算值
+          if (!('counterparty_price' in p)) merged.counterparty_price = cached.counterparty_price;
+          if (!('unrealized_pnl'    in p)) merged.unrealized_pnl    = cached.unrealized_pnl;
+          return merged;
+        }) } };
+      }
       _positionsCache = data.result;
       loadPositions(data.result);
     }
@@ -2413,58 +2433,174 @@ function togglePositionsPanel() {
   toggle.textContent = _posPanelExpanded ? '▾' : '▸';
 }
 
+// ════════════════════════════════════════════
+//  仓位实时 PnL 辅助工具
+// ════════════════════════════════════════════
+
+// 根据品种名称和价格大小自动推断小数位数
+function _pxDigits(symbol, price) {
+  if ((symbol ?? '').includes('JPY')) return 3;
+  return parseFloat(price ?? 0) >= 100 ? 2 : 5;
+}
+
+// 用 _symbolPrices 中最新的 bid/ask 实时刷新某品种所有仓位的当前价和浮盈亏（不重建 DOM）
+function _refreshPnLFromOB(symbol) {
+  const prices = _symbolPrices[symbol];
+  if (!prices || !_positionsCache) return;
+  const list     = _positionsCache?.data?.list ?? [];
+  const affected = list.filter(p => p.symbol === symbol);
+  if (!affected.length) return;
+
+  for (const p of affected) {
+    const mult = _posMultipliers[p.position_id];
+    if (mult == null) continue;
+    const isLong    = (p.position_dir ?? '').toLowerCase() === 'long';
+    const curP      = isLong ? prices.bid : prices.ask;
+    const priceDiff = isLong ? (curP - parseFloat(p.price_open)) : (parseFloat(p.price_open) - curP);
+    const pnl       = priceDiff * parseFloat(p.volume ?? 0) * mult;
+    const digits    = _pxDigits(symbol, curP);
+
+    const curpEl = document.getElementById('pos-curp-' + p.position_id);
+    const pnlEl  = document.getElementById('pos-pnl-'  + p.position_id);
+    if (curpEl) curpEl.textContent = curP.toFixed(digits);
+    if (pnlEl) {
+      pnlEl.textContent = (pnl >= 0 ? '+' : '') + pnl.toFixed(2);
+      pnlEl.className   = pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+    }
+    // 同步更新平仓按钮的 data-pnl，供"仅平盈利/亏损"过滤使用
+    const closeBtn = document.querySelector('.pos-close-btn[onclick*="openCloseConfirm(event,' + p.position_id + ',"]');
+    if (closeBtn) closeBtn.dataset.pnl = pnl;
+    p._rt_pnl = pnl;
+  }
+
+  // 重算汇总总浮盈亏
+  const totalPnl = list.reduce((s, p) => s + (p._rt_pnl ?? parseFloat(p.unrealized_pnl ?? 0)), 0);
+  const totalEl  = document.getElementById('total-pnl-val');
+  if (totalEl && list.length) {
+    totalEl.textContent = (totalPnl >= 0 ? '+' : '') + totalPnl.toFixed(2);
+    totalEl.style.color = totalPnl >= 0 ? '#26a641' : '#f85149';
+  }
+}
+
+// 为非图表品种的仓位订阅专用 OB WebSocket
+function _subscribePosOrderBook(symbol) {
+  if (_posObWSMap[symbol]) return;
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(proto + '//' + location.host + '/ws/orderbook?symbol=' + symbol);
+  _posObWSMap[symbol] = ws;
+  ws.onmessage = (event) => {
+    const d = JSON.parse(event.data);
+    if (d.ping) return;
+    const ask = parseFloat(d.ask), bid = parseFloat(d.bid);
+    if (isNaN(ask) || isNaN(bid)) return;
+    _symbolPrices[symbol] = { ask, bid };
+    _refreshPnLFromOB(symbol);
+  };
+  ws.onclose = (e) => {
+    if (_posObWSMap[symbol] === ws) {
+      delete _posObWSMap[symbol];
+      const list = _positionsCache?.data?.list ?? [];
+      if (e.code !== 1000 && list.some(p => p.symbol === symbol) && symbol !== currentSymbol) {
+        setTimeout(() => _subscribePosOrderBook(symbol), 3000);
+      }
+    }
+  };
+  ws.onerror = () => {};
+}
+
+// 同步仓位品种的 OB WS 订阅：为非图表品种开启，关闭已无仓位品种的订阅
+function _syncPosObWS(list) {
+  const needed = new Set((list ?? []).map(p => p.symbol).filter(s => s && s !== currentSymbol));
+  needed.forEach(sym => { if (!_posObWSMap[sym]) _subscribePosOrderBook(sym); });
+  Object.keys(_posObWSMap).forEach(sym => {
+    if (!needed.has(sym)) {
+      _posObWSMap[sym].onclose = null;
+      _posObWSMap[sym].close(1000);
+      delete _posObWSMap[sym];
+    }
+  });
+}
+
 async function loadPositions(data = null) {
   try {
-    // 全部从 WebSocket 缓存获取数据
-    if (!data && _positionsCache) {
-      data = _positionsCache;
+    if (!data) {
+      // 无传参时（定时器轮询）直接请求 REST API，获取含最新 counterparty_price 和 unrealized_pnl 的数据
+      const resp = await fetch('/api/positions');
+      if (!resp.ok) return;
+      data = await resp.json();
+      _positionsCache = data;
     }
     const list = data?.data?.list ?? [];
     const tbody = document.getElementById('pos-tbody');
     const empty = document.getElementById('pos-empty');
     const count = document.getElementById('pos-count');
-    count.textContent = list.length ? `(${list.length})` : '';
+    count.textContent = list.length ? '(' + list.length + ')' : '';
     tbody.innerHTML   = '';
-    // 计算总盈亏
     const totalPnlEl  = document.getElementById('total-pnl-val');
     if (!list.length) {
       empty.style.display = '';
       totalPnlEl.textContent = '--';
       totalPnlEl.style.color = '';
+      _syncPosObWS([]);
       return;
     }
     empty.style.display = 'none';
-    const totalPnl = list.reduce((s, p) => s + parseFloat(p.unrealized_pnl ?? 0), 0);
-    totalPnlEl.textContent = (totalPnl >= 0 ? '+' : '') + totalPnl.toFixed(2);
-    totalPnlEl.style.color = totalPnl >= 0 ? '#26a641' : '#f85149';
+    let displayTotalPnl = 0;
     for (const p of list) {
-      const pnl      = parseFloat(p.unrealized_pnl ?? 0);
-      const isLong   = (p.position_dir ?? '').toLowerCase() === 'long';
-      const digits   = (p.symbol ?? '').includes('JPY') ? 3 : 5;
-      const openP    = parseFloat(p.price_open       ?? 0).toFixed(digits);
-      const curP     = parseFloat(p.counterparty_price ?? 0).toFixed(digits);
-      const margin   = parseFloat(p.margin ?? 0).toFixed(2);
-      const tp       = parseFloat(p.price_tp ?? 0);
-      const sl       = parseFloat(p.price_sl ?? 0);
-      const pnlTxt   = (pnl >= 0 ? '+' : '') + pnl.toFixed(2);
+      const isLong  = (p.position_dir ?? '').toLowerCase() === 'long';
+      const sym     = p.symbol ?? '';
+      const oP_f    = parseFloat(p.price_open ?? 0);
+      const cP_f    = parseFloat(p.counterparty_price ?? 0);
+      const vol     = parseFloat(p.volume ?? 0);
+      const restPnl = parseFloat(p.unrealized_pnl ?? 0);
+
+      // 从 REST 数据提取 PnL 乘数（包含合约大小、账户货币换算），用于后续 bid/ask 实时计算
+      const priceDiff = isLong ? (cP_f - oP_f) : (oP_f - cP_f);
+      if (vol > 0 && Math.abs(priceDiff) > 1e-8) {
+        _posMultipliers[p.position_id] = restPnl / (priceDiff * vol);
+      }
+
+      // 若已有实时 OB 价格且乘数有效，优先使用，避免 REST 轮询造成价格闪烁
+      const prices = _symbolPrices[sym];
+      const mult   = _posMultipliers[p.position_id];
+      let rtCurP, rtPnl;
+      if (prices && mult != null) {
+        rtCurP = isLong ? prices.bid : prices.ask;
+        const rtDiff = isLong ? (rtCurP - oP_f) : (oP_f - rtCurP);
+        rtPnl = rtDiff * vol * mult;
+      }
+      const dispPnl  = rtPnl  != null ? rtPnl  : restPnl;
+      const dispCurP = rtCurP != null ? rtCurP : cP_f;
+      const digits   = _pxDigits(sym, dispCurP);
+      displayTotalPnl += dispPnl;
+      p._rt_pnl = rtPnl != null ? rtPnl : null;
+
+      const openP  = oP_f.toFixed(digits);
+      const curP   = dispCurP.toFixed(digits);
+      const margin = parseFloat(p.margin ?? 0).toFixed(2);
+      const tp     = parseFloat(p.price_tp ?? 0);
+      const sl     = parseFloat(p.price_sl ?? 0);
+      const pnlTxt = (dispPnl >= 0 ? '+' : '') + dispPnl.toFixed(2);
       const tr = document.createElement('tr');
-      tr.innerHTML = `
-        <td title="${p.symbol_desc ?? ''}">${p.symbol ?? '--'}</td>
-        <td class="${isLong ? 'dir-long' : 'dir-short'}">${isLong ? 'Long ▲' : 'Short ▼'}</td>
-        <td>${p.volume ?? '--'}</td>
-        <td>${openP}</td>
-        <td>${curP}</td>
-        <td class="${pnl >= 0 ? 'pnl-pos' : 'pnl-neg'}">${pnlTxt}</td>
-        <td>${margin}</td>
-        <td>${tp > 0 ? tp.toFixed(digits) : '--'}</td>
-        <td>${sl > 0 ? sl.toFixed(digits) : '--'}</td>
-        <td><button class="pos-edit-btn" data-posid="${p.position_id}" data-dir="${(p.position_dir ?? '').toLowerCase()}" onclick="openTPSLModal(${p.position_id},'${p.symbol ?? ''}',${tp},${sl},${digits})">设置</button>
-            <button class="pos-close-btn" data-pnl="${pnl}" onclick="openCloseConfirm(event,${p.position_id},'${p.symbol ?? ''}','${p.volume ?? '0'}')">  平仓</button></td>
-      `;
+      tr.innerHTML =
+        '<td title="' + (p.symbol_desc ?? '') + '">' + (sym || '--') + '</td>' +
+        '<td class="' + (isLong ? 'dir-long' : 'dir-short') + '">' + (isLong ? 'Long ▲' : 'Short ▼') + '</td>' +
+        '<td>' + (p.volume ?? '--') + '</td>' +
+        '<td>' + openP + '</td>' +
+        '<td id="pos-curp-' + p.position_id + '">' + curP + '</td>' +
+        '<td id="pos-pnl-' + p.position_id + '" class="' + (dispPnl >= 0 ? 'pnl-pos' : 'pnl-neg') + '">' + pnlTxt + '</td>' +
+        '<td>' + margin + '</td>' +
+        '<td>' + (tp > 0 ? tp.toFixed(digits) : '--') + '</td>' +
+        '<td>' + (sl > 0 ? sl.toFixed(digits) : '--') + '</td>' +
+        '<td><button class="pos-edit-btn" data-posid="' + p.position_id + '" data-dir="' + (p.position_dir ?? '').toLowerCase() + '" onclick="openTPSLModal(' + p.position_id + ',\'' + sym + '\',' + tp + ',' + sl + ',' + digits + ')">设置</button>' +
+        '    <button class="pos-close-btn" data-pnl="' + dispPnl + '" onclick="openCloseConfirm(event,' + p.position_id + ',\'' + sym + '\',\'' + (p.volume ?? '0') + '\')">  平仓</button></td>';
       tbody.appendChild(tr);
     }
+    totalPnlEl.textContent = (displayTotalPnl >= 0 ? '+' : '') + displayTotalPnl.toFixed(2);
+    totalPnlEl.style.color = displayTotalPnl >= 0 ? '#26a641' : '#f85149';
+    // 为所有仓位品种同步 OB WebSocket 订阅
+    _syncPosObWS(list);
   } catch(_) {}
-}
 
 // ════════════════════════════════════════════
 //  平仓确认弹窗
@@ -3091,10 +3227,21 @@ SYMBOLS.forEach(sym => {
   if (sym === currentSymbol) btn.classList.add('active');
   btn.addEventListener('click', () => {
     if (sym === currentSymbol) return;
+    const prevSym = currentSymbol;
     currentSymbol = sym;
     symbolBar.querySelectorAll('button').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     loadKlines(currentInterval);
+    // 图表品种切换时管理 OB WS：旧品种若有持仓则开专用 WS，新品种的专用 WS 由图表 WS 接管
+    const posList = _positionsCache?.data?.list ?? [];
+    if (posList.some(p => p.symbol === prevSym) && !_posObWSMap[prevSym]) {
+      _subscribePosOrderBook(prevSym);
+    }
+    if (_posObWSMap[sym]) {
+      _posObWSMap[sym].onclose = null;
+      _posObWSMap[sym].close(1000);
+      delete _posObWSMap[sym];
+    }
     connectOrderBookWS(sym);
     connectTickerWS(sym);
     // 更新市价下单面板上的品种
