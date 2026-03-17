@@ -90,11 +90,11 @@
     margin-bottom: 8px; text-align: center;
   }
   .macd-trend-grid {
-    display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px;
+    display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px;
   }
   .macd-trend-item {
     display: flex; flex-direction: column; align-items: center;
-    padding: 6px 4px; background: #0d1117;
+    padding: 4px 2px; background: #0d1117;
     border: 1px solid #30363d; border-radius: 6px;
     transition: all 0.2s;
   }
@@ -103,14 +103,15 @@
     transform: translateY(-2px);
   }
   .macd-trend-time {
-    font-size: 10px; color: #8b949e;
-    margin-bottom: 4px; font-weight: 600;
+    font-size: 9px; color: #8b949e;
+    margin-bottom: 3px; font-weight: 600;
   }
   .macd-trend-badge {
     display: flex; align-items: center; justify-content: center;
-    gap: 4px; padding: 4px 6px; border-radius: 4px;
-    font-size: 9px; font-weight: 700;
-    min-width: 50px; text-align: center;
+    gap: 2px; padding: 3px 4px; border-radius: 4px;
+    font-size: 8px; font-weight: 700;
+    min-width: 36px; text-align: center;
+    white-space: nowrap;
   }
   /* 强势多头 - 深绿色 */
   .macd-trend-badge.strong_bull {
@@ -1397,7 +1398,7 @@ function renderMacdTrend(data) {
     html += `
       <div class="macd-trend-item">
         <div class="macd-trend-time">${interval}</div>
-        <div class="macd-trend-badge ${trend}">${icon} ${trendData.label || '未知'}</div>
+        <div class="macd-trend-badge ${trend}">${icon} ${trendData.label || "未知"}</div>
         <div class="macd-trend-values">
           <span class="macd-trend-value">MACD: ${trendData.macd !== null ? trendData.macd.toFixed(3) : '--'}</span>
           <span class="macd-trend-value">Diff: ${trendData.hist !== null ? trendData.hist.toFixed(3) : '--'}</span>
@@ -1422,7 +1423,7 @@ async function updateMacdTrend() {
 function startMacdTrendRefresh() {
   if (macdTrendTimer) clearInterval(macdTrendTimer);
   updateMacdTrend();
-  macdTrendTimer = setInterval(() => updateMacdTrend(), macdTrendConfig.refreshInterval);
+  macdTrendTimer = setInterval(updateMacdTrend, macdTrendConfig.refreshInterval);
 }
 
 function stopMacdTrendRefresh() {
