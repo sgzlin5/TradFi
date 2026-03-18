@@ -1438,14 +1438,23 @@ def api_macd_trend(
             }
             
         except Exception as e:
-            # 错误处理
+            # 错误处理 - 添加详细日志
+            import traceback
+            error_detail = {
+                "error_type": type(e).__name__,
+                "error_message": str(e),
+                "traceback": traceback.format_exc()
+            }
+            print(f"[DEBUG] MACD Trend Error for {symbol} {interval}: {error_detail}")
+            
             result["trends"][interval] = {
                 "trend": "neutral",
                 "label": "错误",
                 "macd": None,
                 "signal": None,
                 "hist": None,
-                "error": str(e)
+                "error": str(e),
+                "error_type": type(e).__name__
             }
     
     return JSONResponse(content=result)
