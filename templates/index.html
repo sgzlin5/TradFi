@@ -90,11 +90,11 @@
     margin-bottom: 8px; text-align: center;
   }
   .macd-trend-grid {
-    display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px;
+    display: grid; grid-template-columns: 1fr; gap: 6px;
   }
   .macd-trend-item {
-    display: flex; flex-direction: column; align-items: center;
-    padding: 4px 2px; background: #0d1117;
+    display: flex; flex-direction: row; align-items: center; justify-content: space-between;
+    padding: 8px 12px; background: #0d1117;
     border: 1px solid #30363d; border-radius: 6px;
     transition: all 0.2s;
   }
@@ -103,14 +103,14 @@
     transform: translateY(-2px);
   }
   .macd-trend-time {
-    font-size: 9px; color: #8b949e;
-    margin-bottom: 3px; font-weight: 600;
+    font-size: 12px; color: #8b949e;
+    font-weight: 600; min-width: 40px;
   }
   .macd-trend-badge {
     display: flex; align-items: center; justify-content: center;
-    gap: 2px; padding: 3px 4px; border-radius: 4px;
-    font-size: 8px; font-weight: 700;
-    min-width: 36px; text-align: center;
+    gap: 4px; padding: 4px 8px; border-radius: 4px;
+    font-size: 11px; font-weight: 700;
+    text-align: center;
     white-space: nowrap;
   }
   /* 强势多头 - 深绿色 */
@@ -144,14 +144,13 @@
     border: 1px solid rgba(139, 148, 158, 0.4);
   }
   .macd-trend-values {
-    display: flex; flex-direction: column; align-items: center;
-    margin-top: 4px; font-size: 8px; color: #6e7681; width: 100%;
+    display: flex; flex-direction: row; align-items: center;
+    gap: 8px; font-size: 11px; color: #6e7681;
   }
   .macd-trend-value {
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    font-weight: 500;
   }
   .macd-trend-loading {
     text-align: center; padding: 20px 14px;
@@ -1405,8 +1404,8 @@ function renderMacdTrend(data) {
         <div class="macd-trend-time">${interval}</div>
         <div class="macd-trend-badge ${trend}">${icon} ${trendData.label || "未知"}</div>
         <div class="macd-trend-values">
-          <span class="macd-trend-value">MACD: ${trendData.macd !== null ? trendData.macd.toFixed(3) : '--'}</span>
-          <span class="macd-trend-value">Diff: ${trendData.hist !== null ? trendData.hist.toFixed(3) : '--'}</span>
+          <span class="macd-trend-value">MACD: ${trendData.macd !== null ? trendData.macd.toFixed(4) : '--'}</span>
+          <span class="macd-trend-value">Diff: ${trendData.hist !== null ? trendData.hist.toFixed(4) : '--'}</span>
         </div>
       </div>
     `;
