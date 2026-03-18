@@ -1350,7 +1350,12 @@ function getCurrentSymbol() {
   if (symbolFromUrl) return symbolFromUrl;
   
   const titleEl = document.getElementById('symbol-title');
-  if (titleEl && titleEl.textContent) return titleEl.textContent.trim();
+  if (titleEl && titleEl.textContent) {
+    // symbol-title 可能包含 "XAUUSD  1h  4998.98" 格式
+    // 只提取第一个单词作为交易对代码
+    const parts = titleEl.textContent.trim().split(/\s+/);
+    if (parts.length > 0) return parts[0];
+  }
   
   return "XAUUSD";
 }

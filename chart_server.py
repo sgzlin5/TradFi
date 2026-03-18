@@ -1385,6 +1385,10 @@ def api_macd_trend(
     
     api_key, api_secret = creds
     
+    # 清理 symbol 参数，提取第一个单词作为交易对代码
+    # 前端可能传递 "XAUUSD  1h  4998.98" 格式
+    symbol = symbol.strip().split()[0] if symbol else "XAUUSD"
+    
     # 需要查询的时间周期
     intervals = ["1h", "4h", "30m", "15m", "5m"]
     
